@@ -603,7 +603,13 @@ internal fun KeyView(
                                 if (letterKey && cSettings.keyPreview && a0 != null) {
                                     popup.show(PopupState(holder, a0.x, a0.y, lbl, vars, 0, false))
                                 }
-                                if (instant) act.commitKey(k, out)
+                                // точка касания внутри клавиши (-0.5…0.5) — автоисправление учитывает, куда попал палец
+                                val touchX = down.position.x / size.width - 0.5f
+                                val touchY = down.position.y / size.height - 0.5f
+                                if (instant) {
+                                    act.keyTouch(touchX, touchY)
+                                    act.commitKey(k, out)
+                                }
                                 val glideStart = max(slop * 1.5f, size.width * 0.6f)
                                 val upDist = size.height * 0.45f
                                 val holdAt = if (vars.size > 1) SystemClock.uptimeMillis() + cSettings.longPressMs.toLong() else Long.MAX_VALUE
@@ -635,7 +641,10 @@ internal fun KeyView(
                                     }
                                 }
                                 when (gesture) {
-                                    KeyGesture.RELEASED -> if (!instant) act.commitKey(k, out)
+                                    KeyGesture.RELEASED -> if (!instant) {
+                                        act.keyTouch(touchX, touchY)
+                                        act.commitKey(k, out)
+                                    }
                                     KeyGesture.CANCELED -> Unit
                                     KeyGesture.SWIPE_UP -> {
                                         val sym = upSymbol ?: out

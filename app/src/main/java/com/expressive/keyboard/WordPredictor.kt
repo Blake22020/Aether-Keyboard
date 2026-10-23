@@ -141,6 +141,9 @@ import kotlin.math.sqrt
 // слово из словаря или набранное вами дважды никогда не исправляется.
 // ============================================================================
 
+/** Куда попал палец: смещение от центра нажатой клавиши в долях её ширины и высоты (-0.5…0.5). */
+data class KeyTouch(val dx: Float, val dy: Float)
+
 data class UndoAutoCorrectState(val originalWord: String, val committedText: String)
 
 @Immutable
@@ -551,6 +554,13 @@ object WordPredictorEngine {
 
     // ---------------------------------------------------------------- опечатки
 
+    /** Исправления, отменённые в этой сессии: такое слово больше не трогаем (даже в режиме инкогнито). */
+    private val rejected = ConcurrentHashMap.newKeySet<String>()
+
+    fun rejectCorrection(lang: KeyboardLanguage, word: String) {
+        rejected += uKey(lang, word.trim().lowercase())
+    }
+
     private fun baseLetter(c: Char): Char {
         if (c == 'ё') return 'е'
         if (c.code < 0xC0) return c
@@ -562,6 +572,18 @@ object WordPredictorEngine {
         val pa = lang.keyPositions[a] ?: return false
         val pb = lang.keyPositions[b] ?: return false
         return abs(pa.first - pb.first) <= 1f && abs(pa.second - pb.second) <= 1.01f
+    }
+
+    /** Клавиша выше, чем шире, — по вертикали промахиваются реже. */
+    private const val ROW_SCALE = 1.3f
+
+    /** Квадрат расстояния (в ширинах клавиши) от касания по клавише typed до центра клавиши target. */
+    private fun touchDist2(lang: KeyboardLanguage, typed: Char, touch: KeyTouch, target: Char): Float {
+        val p = lang.keyPositions[typed] ?: return Float.MAX_VALUE
+        val q = lang.keyPositions[target] ?: return Float.MAX_VALUE
+        val dx = p.second + touch.dx - q.second
+        val dy = (p.first + touch.dy - q.first) * ROW_SCALE
+        return dx * dx + dy * dy
     }
 
     /**
@@ -579,48 +601,91 @@ object WordPredictorEngine {
 
     private fun soundAlike(a: Char, b: Char) = "$a$b" in SOUND_ALIKE
 
-    private fun subCost(lang: KeyboardLanguage, a: Char, b: Char): Float = when {
-        a == b -> 0f
-        baseLetter(a) == baseLetter(b) -> 0.15f
-        soundAlike(a, b) -> 0.45f
-        adjacent(lang, a, b) -> 0.55f
-        else -> 1f
+    /**
+     * Цена замены набранной буквы a на b. Если известно, куда попал палец, решает геометрия, как в Gboard:
+     * касание у границы «а» и «о» делает замену почти бесплатной, удар точно в центр «а» — дорогой.
+     */
+    private fun subCost(lang: KeyboardLanguage, a: Char, b: Char, touch: KeyTouch?): Float {
+        if (a == b) return 0f
+        if (baseLetter(a) == baseLetter(b)) return 0.15f
+        val sound = if (soundAlike(a, b)) 0.45f else 1f
+        if (touch != null && lang.keyPositions.containsKey(a) && lang.keyPositions.containsKey(b)) {
+            val spatial = 0.1f + 0.6f * (touchDist2(lang, a, touch, b) - touchDist2(lang, a, touch, a))
+            return min(sound, spatial.coerceIn(0.1f, 1f))
+        }
+        return min(sound, if (adjacent(lang, a, b)) 0.55f else 1f)
     }
 
     /** Взвешенное расстояние Дамерау–Левенштейна: typed → dict, с ранним выходом после limit. */
-    private fun editCost(lang: KeyboardLanguage, typed: String, dict: String, limit: Float): Float {
+    private fun editCost(lang: KeyboardLanguage, typed: String, dict: String, limit: Float, touches: List<KeyTouch?>?): Float {
         val n = typed.length
         val m = dict.length
         if (n > 30 || m > 30) return Float.MAX_VALUE
         var prev2 = FloatArray(m + 1)
-        var prev = FloatArray(m + 1) { it * 0.8f }
+        var prev = FloatArray(m + 1)
+        for (j in 1..m) prev[j] = prev[j - 1] + if (j >= 2 && dict[j - 1] == dict[j - 2]) 0.45f else 0.8f
         var cur = FloatArray(m + 1)
+        // перестановка смотрит на два ряда назад — выходим, только если оба ряда уже дороже лимита
+        var prevMin = 0f
         for (i in 1..n) {
             cur[0] = i * 0.85f
             var rowMin = cur[0]
             val a = typed[i - 1]
+            val touch = touches?.getOrNull(i - 1)
+            // лишняя буква: дешевле, если это дубль или соседняя клавиша (задели две сразу)
+            val delCost = when {
+                i >= 2 && typed[i - 2] == a -> 0.45f
+                i >= 2 && adjacent(lang, typed[i - 2], a) -> 0.6f
+                else -> 0.85f
+            }
             for (j in 1..m) {
                 val b = dict[j - 1]
-                // лишняя буква: дешевле, если это дубль или соседняя клавиша
-                val delCost = if (i >= 2 && (typed[i - 2] == a || adjacent(lang, typed[i - 2], a))) 0.6f else 0.85f
+                // пропущенная буква: удвоенную («класный» → «классный») пропускают чаще всего
+                val insCost = if (j >= 2 && dict[j - 2] == b) 0.45f else 0.8f
                 var v = min(
-                    prev[j - 1] + subCost(lang, a, b),
-                    min(prev[j] + delCost, cur[j - 1] + 0.8f)
+                    prev[j - 1] + subCost(lang, a, b, touch),
+                    min(prev[j] + delCost, cur[j - 1] + insCost)
                 )
-                if (i >= 2 && j >= 2 && a == dict[j - 2] && typed[i - 2] == b) v = min(v, prev2[j - 2] + 0.6f)
+                if (i >= 2 && j >= 2 && a == dict[j - 2] && typed[i - 2] == b) v = min(v, prev2[j - 2] + 0.5f)
                 cur[j] = v
                 if (v < rowMin) rowMin = v
             }
-            if (rowMin > limit) return Float.MAX_VALUE
+            if (rowMin > limit && prevMin > limit) return Float.MAX_VALUE
+            prevMin = rowMin
             val t = prev2; prev2 = prev; prev = cur; cur = t
         }
         return prev[m]
     }
 
-    private class Candidate(val word: String, val cost: Float, val score: Float)
+    /** Штраф за редкость слова: чем дальше от начала частотного списка, тем дороже. */
+    private fun freqCost(rank: Int): Float = 0.15f * kotlin.math.ln(1f + rank / 30f)
+
+    /** Бонус за то, что слово часто идёт после предыдущего («доброе» → «утро»). */
+    private fun contextBonus(lang: KeyboardLanguage, prev: String, w: String): Float {
+        if (prev.isEmpty()) return 0f
+        var bonus = 0f
+        val n = userBigrams["${lang.id}:$prev|$w"] ?: 0
+        if (n > 0) bonus += min(0.6f, 0.25f * kotlin.math.ln(1f + n))
+        val builtin = when (lang.id) {
+            "ru" -> ruBigrams[prev]
+            "en" -> enBigrams[prev]
+            else -> null
+        }
+        if (builtin?.contains(w) == true) bonus += 0.3f
+        return bonus
+    }
+
+    private class Candidate(val word: String, val cost: Float, val score: Float, val rank: Int)
 
     /** Ближайшие слова словаря к набранному (с первой буквой, её соседями или переставленной второй). */
-    private fun nearWords(lower: String, lang: KeyboardLanguage, maxCost: Float, limit: Int = 4): List<Candidate> {
+    private fun nearWords(
+        lower: String,
+        lang: KeyboardLanguage,
+        maxCost: Float,
+        limit: Int = 4,
+        prev: String = "",
+        touches: List<KeyTouch?>? = null
+    ): List<Candidate> {
         val d = dictFor(lang) ?: return emptyList()
         val first = lower[0]
         val starts = LinkedHashSet<Char>()
@@ -630,64 +695,140 @@ object WordPredictorEngine {
         if (baseLetter(first) != first) starts += baseLetter(first)
         lang.keyPositions.keys.forEach { if (soundAlike(first, it)) starts += it }
         val maxLenDiff = if (lower.length <= 4) 1 else 2
+        val p = prev.trim().lowercase()
         val best = ArrayList<Candidate>()
         for (c in starts) {
             val idx = d.byFirst[c] ?: continue
             for (i in idx) {
                 val w = d.words[i]
                 if (abs(w.length - lower.length) > maxLenDiff || w == lower) continue
-                val cost = editCost(lang, lower, w, maxCost)
+                val cost = editCost(lang, lower, w, maxCost, touches)
                 if (cost > maxCost) continue
                 val uc = userCount(lang, w)
-                val score = cost + 0.12f * kotlin.math.ln(1f + i / 40f) - 0.1f * kotlin.math.ln(1f + uc)
-                best += Candidate(w, cost, score)
+                val score = cost + freqCost(i) - 0.12f * kotlin.math.ln(1f + uc) - contextBonus(lang, p, w)
+                best += Candidate(w, cost, score, i)
             }
         }
         best.sortBy { it.score }
         return best.distinctBy { it.word }.take(limit)
     }
 
+    /** Однобуквенные слова, которые можно отделить пропущенным пробелом. */
+    private fun singleLetterWord(lang: KeyboardLanguage, s: String): Boolean = when (lang.id) {
+        "ru" -> s in RU_SINGLE
+        "en" -> s == "a" || s == "i"
+        else -> false
+    }
+
+    private val RU_SINGLE = setOf("в", "с", "и", "к", "у", "я", "а", "о")
+
+    /** Пропущенный пробел: «приветкак» → «привет как», «вкино» → «в кино». Возвращает пару и её цену. */
+    private fun splitWords(lower: String, lang: KeyboardLanguage, normal: Boolean): Pair<String, Float>? {
+        if (lower.length < 5) return null
+        val d = dictFor(lang) ?: return null
+        val maxRank = if (normal) 30_000 else 15_000
+        var bestText: String? = null
+        var bestScore = Float.MAX_VALUE
+        for (k in 1 until lower.length) {
+            val l = lower.substring(0, k)
+            val r = lower.substring(k)
+            if (l.length == 1 && !singleLetterWord(lang, l)) continue
+            if (r.length == 1 && !singleLetterWord(lang, r)) continue
+            val rl = d.rank[l]?.takeIf { it <= maxRank } ?: continue
+            val rr = d.rank[r]?.takeIf { it <= maxRank } ?: continue
+            val score = 0.5f + freqCost(rl) + freqCost(rr) - contextBonus(lang, l, r)
+            if (score < bestScore) {
+                bestScore = score
+                bestText = "$l $r"
+            }
+        }
+        val text = bestText ?: return null
+        return if (bestScore <= (if (normal) 2.1f else 1.7f)) text to bestScore else null
+    }
+
     /**
-     * Автоисправление только когда уверены:
-     * слово незнакомо, лучший вариант близко (с учётом соседних клавиш), частый и заметно лучше второго.
+     * Автоисправление незнакомого слова: лучший вариант по сумме «цена опечатки + редкость − контекст».
+     * Касания учитываются — промах у края клавиши исправляется уверенно, а точное попадание почти никогда.
      */
-    private fun correctionLower(lower: String, lang: KeyboardLanguage, strength: String): String? {
+    private fun correctionLower(
+        lower: String,
+        lang: KeyboardLanguage,
+        strength: String,
+        prev: String,
+        touches: List<KeyTouch?>?
+    ): String? {
         if (lower.length < 2 || lower.any { !it.isLetter() && it != '\'' && it != '-' }) return null
         if (lang.id == "ru") ruTypos[lower]?.let { return it }
         if (lang.id == "en") enTypos[lower]?.let { return it }
         if (lower.length < 3 || !lang.autoCorrect || !hasDictionary(lang)) return null
         val normal = strength == "NORMAL"
-        // короткие слова чаще всего сленг и сокращения («спс», «оч») — осторожный режим их не трогает
-        if (!normal && lower.length <= 3) return null
+        val hasTouch = touches?.any { it != null } == true
+        val len = lower.length
+        // короткие слова часто сленг и сокращения («спс», «оч»): без данных о касаниях осторожный режим их не трогает
         val maxCost = when {
-            lower.length <= 3 -> 0.55f
-            lower.length == 4 -> if (normal) 0.8f else 0.55f
-            lower.length <= 7 -> if (normal) 1.3f else 1.0f
-            else -> if (normal) 1.8f else 1.45f
+            len == 3 -> if (normal) 0.5f else if (hasTouch) 0.4f else return null
+            len == 4 -> if (normal) 0.85f else 0.65f
+            len <= 7 -> if (normal) 1.35f else 1.05f
+            else -> if (normal) 1.9f else 1.5f
         }
-        val cands = nearWords(lower, lang, maxCost, 3)
-        val best = cands.firstOrNull() ?: return null
-        val d = dictFor(lang) ?: return null
-        val r = d.rank[best.word] ?: Int.MAX_VALUE
         val maxRank = when {
-            normal -> 40_000
-            lower.length == 4 -> 8_000
-            else -> 20_000
+            len == 3 -> if (normal) 8_000 else 3_000
+            len == 4 -> if (normal) 25_000 else 10_000
+            else -> if (normal) 40_000 else 25_000
         }
-        if (r > maxRank && userCount(lang, best.word) < 2) return null
+        val cands = nearWords(lower, lang, maxCost, 4, prev, touches)
+            .filter { it.rank <= maxRank || userCount(lang, it.word) >= 2 }
+        val best = cands.firstOrNull()
+        val split = splitWords(lower, lang, normal)
+        if (split != null && (best == null || split.second < best.score)) return split.first
+        if (best == null) return null
         val second = cands.getOrNull(1)
-        if (second != null && !normal && second.score - best.score < 0.12f && second.cost <= best.cost + 0.05f) return null
+        // в осторожном режиме два почти равных варианта — не угадываем
+        if (second != null && !normal && second.score - best.score < 0.1f && second.cost <= best.cost + 0.05f) return null
         return best.word
     }
 
-    fun autoCorrectionFor(word: String, lang: KeyboardLanguage, strength: String = "SAFE"): String? {
+    /**
+     * Слово есть в словаре, но очень редкое, а палец явно промахнулся мимо частого соседа.
+     * Срабатывает только при данных о касаниях и только если вы сами это слово никогда не набирали.
+     */
+    private fun rareWordFix(
+        lower: String,
+        lang: KeyboardLanguage,
+        strength: String,
+        prev: String,
+        touches: List<KeyTouch?>?
+    ): String? {
+        if (touches == null || touches.none { it != null } || lower.length < 3) return null
+        if (!lang.autoCorrect || !hasDictionary(lang) || userCount(lang, lower) > 0) return null
+        if (lower.any { !it.isLetter() }) return null
+        val d = dictFor(lang) ?: return null
+        val r = d.rank[lower] ?: return null
+        val normal = strength == "NORMAL"
+        if (r < (if (normal) 12_000 else 20_000)) return null
+        val best = nearWords(lower, lang, if (normal) 0.4f else 0.32f, 2, prev, touches).firstOrNull() ?: return null
+        if (best.rank * 20 > r) return null
+        return if (freqCost(r) - best.score >= (if (normal) 0.3f else 0.45f)) best.word else null
+    }
+
+    fun autoCorrectionFor(
+        word: String,
+        lang: KeyboardLanguage,
+        strength: String = "SAFE",
+        previous: String = "",
+        touches: List<KeyTouch?>? = null
+    ): String? {
         val clean = word.trim()
         if (clean.length < 2) return null
         // аббревиатуры и слова с заглавной внутри (iPhone, ООО) не трогаем
         if (clean.drop(1).any { it.isUpperCase() } && !clean.all { it.isUpperCase() }) return null
         val lower = clean.lowercase()
-        if (isKnown(lower, lang)) return null
-        val fix = correctionLower(lower, lang, strength) ?: return null
+        if (uKey(lang, lower) in rejected) return null
+        val t = touches?.takeIf { it.size == clean.length }
+        val prev = previous.trim().lowercase()
+        val fix = if (isKnown(lower, lang)) rareWordFix(lower, lang, strength, prev, t)
+        else correctionLower(lower, lang, strength, prev, t)
+        fix ?: return null
         return applyCase(fix, clean.first().isUpperCase(), clean.length > 1 && clean.all { it.isUpperCase() })
     }
 
@@ -734,7 +875,8 @@ object WordPredictorEngine {
         lang: KeyboardLanguage,
         capitalizeNext: Boolean,
         strength: String = "SAFE",
-        autoCorrect: Boolean = true
+        autoCorrect: Boolean = true,
+        touches: List<KeyTouch?>? = null
     ): PredictionSnapshot {
         val clean = word.trim()
         if (clean.isEmpty()) return nextWords(previous, undo, lang, capitalizeNext)
@@ -743,14 +885,15 @@ object WordPredictorEngine {
         val allCaps = clean.length > 1 && clean.all { it.isUpperCase() }
         val cap = clean.first().isUpperCase()
         val known = isKnown(lower, lang)
-        val fix = if (autoCorrect) autoCorrectionFor(clean, lang, strength) else null
+        val fix = if (autoCorrect) autoCorrectionFor(clean, lang, strength, previous, touches) else null
         val comps = completions(lower, lang, 3).map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
 
         val chips = when {
             fix != null -> listOf(
                 SuggestionChipModel("«$clean»", clean, isKeepExact = true),
                 SuggestionChipModel(fix, fix, isPrimary = true),
-                comps.firstOrNull()?.let { SuggestionChipModel(it, it) } ?: SuggestionChipModel.EMPTY
+                (comps.firstOrNull() ?: alternativeTo(fix, lower, lang, previous, touches, cap, allCaps))
+                    ?.let { SuggestionChipModel(it, it) } ?: SuggestionChipModel.EMPTY
             )
             known -> listOf(
                 comps.getOrNull(0)?.let { SuggestionChipModel(it, it) } ?: SuggestionChipModel.EMPTY,
@@ -764,7 +907,7 @@ object WordPredictorEngine {
             )
             else -> {
                 // похожие слова — только как подсказки, без замены по пробелу
-                val near = if (clean.length >= 3) nearWords(lower, lang, 1.4f, 2).map { applyCase(it.word, cap, allCaps) } else emptyList()
+                val near = if (clean.length >= 3) nearWords(lower, lang, 1.4f, 2, previous, touches?.takeIf { it.size == clean.length }).map { applyCase(it.word, cap, allCaps) } else emptyList()
                 listOf(
                     near.getOrNull(0)?.let { SuggestionChipModel(it, it) } ?: SuggestionChipModel.EMPTY,
                     SuggestionChipModel(clean, clean, isPrimary = true, isKeepExact = true),
@@ -773,6 +916,23 @@ object WordPredictorEngine {
             }
         }
         return PredictionSnapshot(chips, fix, clean)
+    }
+
+    /** Второй по вероятности вариант исправления — для правой подсказки. */
+    private fun alternativeTo(
+        fix: String,
+        lower: String,
+        lang: KeyboardLanguage,
+        previous: String,
+        touches: List<KeyTouch?>?,
+        cap: Boolean,
+        allCaps: Boolean
+    ): String? {
+        if (lower.length < 3) return null
+        val t = touches?.takeIf { it.size == lower.length }
+        return nearWords(lower, lang, 1.4f, 3, previous.trim().lowercase(), t)
+            .map { applyCase(it.word, cap, allCaps) }
+            .firstOrNull { !it.equals(fix, ignoreCase = true) }
     }
 
     private fun nextWords(

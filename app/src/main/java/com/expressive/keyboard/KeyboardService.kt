@@ -165,6 +165,8 @@ interface KeyboardActions {
     fun keyUp()
     fun keyTick()
     fun commitKey(key: KeyModel, text: String)
+    /** Где именно нажата следующая клавиша: смещение от её центра в долях ширины и высоты (-0.5…0.5). */
+    fun keyTouch(fx: Float, fy: Float) {}
     fun swipeSpace(direction: Int)
     fun pickSuggestion(chip: SuggestionChipModel)
     fun commitText(text: String)
@@ -338,6 +340,10 @@ class ComposeKeyboardService : InputMethodService(),
     private var shiftBeforeKey = ShiftState.OFF
     /** Нажатые клавиши текущего слова для корейского (слоги) и вьетнамского (Telex): composing = compose(raw). */
     private var rawComposing = ""
+    /** Точка касания последней клавиши и касания по буквам текущего слова (для автоисправления). */
+    private var pendingTouch: KeyTouch? = null
+    private val wordTouches = ArrayList<KeyTouch?>()
+    private var touchesFor = ""
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { syncClipboard() }
 
@@ -623,8 +629,29 @@ class ComposeKeyboardService : InputMethodService(),
     private fun resolveCorrection(word: String): String? {
         if (!settings.autoCorrect || !flags.autoCorrect) return null
         if (word == "i" && kb.language.id == "en") return "I"
-        val c = if (precomputedFor == word) precomputed else WordPredictorEngine.autoCorrectionFor(word, kb.language, settings.autoCorrectStrength)
+        val c = if (precomputedFor == word) precomputed else WordPredictorEngine.autoCorrectionFor(
+            word, kb.language, settings.autoCorrectStrength, lastCommittedWord, touchesOf(word)
+        )
         return if (c != null && c != word) c else null
+    }
+
+    /** Касания по буквам слова — только если они точно относятся к нему (слово набрано по буквам). */
+    private fun touchesOf(word: String): List<KeyTouch?>? =
+        if (word.isNotEmpty() && touchesFor == word && wordTouches.size == word.length) wordTouches.toList() else null
+
+    private fun trackTouch(before: String, after: String, touch: KeyTouch?) {
+        if (touchesFor != before || wordTouches.size != before.length) {
+            wordTouches.clear()
+            repeat(before.length) { wordTouches.add(null) }
+        }
+        repeat(after.length - before.length) { wordTouches.add(touch) }
+        touchesFor = after
+    }
+
+    private fun trimTouches(before: String, after: String) {
+        if (touchesFor != before) return
+        while (wordTouches.size > after.length) wordTouches.removeAt(wordTouches.lastIndex)
+        touchesFor = after
     }
 
     private fun schedulePredictions() {
@@ -642,12 +669,13 @@ class ComposeKeyboardService : InputMethodService(),
         val capNext = kb.shift != ShiftState.OFF && lang.hasCase
         val s = settings
         val correct = s.autoCorrect && flags.autoCorrect
+        val touches = touchesOf(word)
         val shortcut = if (word.isNotEmpty()) PluginRepository.shortcuts[word.lowercase()] else null
         // подсказки модов (событие "suggest") встают по бокам
         val extra = if (ScriptHost.has("suggest")) ScriptHost.suggestions(word, prev) else emptyList()
         predictionJob = serviceScope.launch {
             val snap = withContext(Dispatchers.Default) {
-                WordPredictorEngine.predict(word, prev, u, lang, capNext, s.autoCorrectStrength, correct)
+                WordPredictorEngine.predict(word, prev, u, lang, capNext, s.autoCorrectStrength, correct, touches)
             }
             val chips = snap.chips.toMutableList()
             if (extra.isNotEmpty()) {
@@ -687,7 +715,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     // ------------------------------------------------------------------ набор текста
 
-    private fun typeCharacter(text: String) {
+    private fun typeCharacter(text: String, touch: KeyTouch? = null) {
         val ic = currentInputConnection ?: return
         val afterSpace = lastActionWasSpace
         lastActionWasSpace = false
@@ -717,7 +745,11 @@ class ComposeKeyboardService : InputMethodService(),
                 if (composeRaw(comp, rawComposing) != composing) rawComposing = composing
                 rawComposing += text
                 icSetComposing(ic, composeRaw(comp, rawComposing))
-            } else icSetComposing(ic, composing + text)
+            } else {
+                val before = composing
+                icSetComposing(ic, before + text)
+                trackTouch(before, composing, touch)
+            }
             schedulePredictions()
             return
         }
@@ -809,7 +841,9 @@ class ComposeKeyboardService : InputMethodService(),
             val committed = correction + suffix
             icCommit(ic, committed)
             undo = UndoAutoCorrectState(word, committed)
-            lastCommittedWord = correction
+            // исправленное слово тоже учится — растут частота и пары слов, как в Gboard
+            if (' ' !in correction) learn(lastCommittedWord, correction)
+            lastCommittedWord = correction.substringAfterLast(' ')
         } else {
             icCommit(ic, word + suffix)
             undo = null
@@ -917,8 +951,10 @@ class ComposeKeyboardService : InputMethodService(),
                 schedulePredictions()
                 return
             }
+            val before = composing
             val trimmed = if (composing.length >= 2 && composing.last().isLowSurrogate()) composing.dropLast(2) else composing.dropLast(1)
             if (trimmed.isEmpty()) icCommit(ic, "") else icSetComposing(ic, trimmed)
+            trimTouches(before, trimmed)
             schedulePredictions()
             return
         }
@@ -929,6 +965,8 @@ class ComposeKeyboardService : InputMethodService(),
             icSetComposing(ic, u.originalWord)
             ic.endBatchEdit()
             undo = null
+            // отменённое исправление больше не повторяется
+            WordPredictorEngine.rejectCorrection(kb.language, u.originalWord)
             learn("", u.originalWord, 2)
             schedulePredictions()
             return
@@ -1031,8 +1069,9 @@ class ComposeKeyboardService : InputMethodService(),
                 val wasSingle = kb.shift == ShiftState.SINGLE
                 if (kb.panel == ActivePanel.TRANSLATE) kb.translatorInput += text else {
                     val t = if (ScriptHost.has("key") && !flags.isPassword) ScriptHost.filterKey(text) ?: return else text
-                    if (t.isNotEmpty()) typeCharacter(t)
+                    if (t.isNotEmpty()) typeCharacter(t, pendingTouch)
                 }
+                pendingTouch = null
                 if (wasSingle && kb.shift == ShiftState.SINGLE && text.any { isWordLetter(it) || it.isDigit() }) kb.shift = ShiftState.OFF
             }
             KeyType.SHIFT -> toggleShift()
@@ -1051,6 +1090,10 @@ class ComposeKeyboardService : InputMethodService(),
             } else performEnter()
             KeyType.SPACER -> Unit
         }
+    }
+
+    override fun keyTouch(fx: Float, fy: Float) {
+        pendingTouch = KeyTouch(fx, fy)
     }
 
     override fun swipeSpace(direction: Int) {
@@ -1117,10 +1160,13 @@ class ComposeKeyboardService : InputMethodService(),
             icDeleteBefore(ic, u.committedText.length)
             icCommit(ic, u.originalWord + " ")
             ic.endBatchEdit()
+            WordPredictorEngine.rejectCorrection(kb.language, u.originalWord)
             learn("", u.originalWord, 3)
             lastCommittedWord = u.originalWord
         } else {
             var word = chip.commitWord
+            // «оставить как есть» — это слово больше не исправлять
+            if (chip.isKeepExact && composing.isNotEmpty() && word == composing) WordPredictorEngine.rejectCorrection(kb.language, word)
             if (composing.isEmpty() && kb.shift != ShiftState.OFF) word = word.replaceFirstChar { it.uppercase() }
             icCommit(ic, "$word ")
             charBeforeAutoSpace = word.lastOrNull()

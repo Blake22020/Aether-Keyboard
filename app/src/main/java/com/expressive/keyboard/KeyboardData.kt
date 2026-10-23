@@ -185,13 +185,13 @@ data class KeyRow(val keys: List<KeyModel>, val heightWeight: Float = 1f)
 
 object KeyVariantsCatalog {
     private val variantsMap: Map<String, List<String>> = mapOf(
-        "и" to listOf("ї", "й", "і"), "е" to listOf("э", "ё", "є"), "ь" to listOf("ы", "ъ", "ѣ"),
-        "ш" to listOf("7", "щ", "ш"), "щ" to listOf("ш", "щ", "8"), "й" to listOf("ї", "1", "і"),
+        "и" to listOf("ї", "й", "і"), "е" to listOf("5", "є", "ё", "э"), "ь" to listOf("ы", "ъ", "ѣ"),
+        "ш" to listOf("щ", "8", "ш"), "щ" to listOf("ш", "9", "щ"), "й" to listOf("ї", "1", "і"),
         "ц" to listOf("@", "2", "ц"), "у" to listOf("ў", "3", "у"), "к" to listOf("$", "4", "к"),
-        "н" to listOf("%", "6", "н"), "г" to listOf("ґ", "7", "г"), "з" to listOf("№", "9", "з"),
-        "х" to listOf("[", "0", "]"), "ф" to listOf("~", "ф", "|"), "ы" to listOf("і", "ы", "ї"),
+        "н" to listOf("%", "6", "н"), "г" to listOf("ґ", "7", "г"), "з" to listOf("№", "0", "з"),
+        "х" to listOf("[", "ъ", "]"), "ф" to listOf("~", "ф", "|"), "ы" to listOf("і", "ы", "ї"),
         "в" to listOf("#", "в", "№"), "а" to listOf("@", "а", "&"), "п" to listOf("§", "п", "¶"),
-        "р" to listOf("₽", "р", "®"), "о" to listOf("°", "о", "0"), "л" to listOf("/", "л", "\\"),
+        "р" to listOf("₽", "р", "®"), "о" to listOf("°", "о", "º"), "л" to listOf("/", "л", "\\"),
         "д" to listOf(":", "д", ";"), "ж" to listOf("\"", "ж", "'"), "э" to listOf("є", "э", "ё"),
         "я" to listOf("«", "я", "»"), "ч" to listOf("<", "ч", ">"), "с" to listOf("©", "с", "$"),
         "м" to listOf("µ", "м", "№"), "т" to listOf("™", "т", "+"), "б" to listOf("„", "б", "“"),
