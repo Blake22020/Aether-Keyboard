@@ -1,0 +1,8 @@
+.gradle/
+build/
+app/build/
+local.properties
+app/src/main/assets/fonts/
+*.iml
+.idea/
+dist/

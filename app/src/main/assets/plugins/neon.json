@@ -1,0 +1,36 @@
+{
+  "id": "builtin.neon",
+  "name": "Неон",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Тёмный фон, светящиеся контуры клавиш и подсветка при нажатии",
+  "icon": "🌃",
+  "skin": {
+    "keyboard": {
+      "background": { "colors": ["#07040F", "#120A24"], "angle": 90 },
+      "trail": "#FF2BD1",
+      "font": "mono"
+    },
+    "colors": { "background": "#07040F", "accent": "#FF2BD1", "accentText": "#07040F" },
+    "keys": {
+      "*": {
+        "material": "outline",
+        "border": { "colors": ["#00F0FF", "#FF2BD1"], "angle": 135 },
+        "borderWidth": 1.6,
+        "glow": "#9900F0FF",
+        "text": "#E6FCFF",
+        "textGlow": "#00F0FF",
+        "pressedBackground": "#00F0FF",
+        "pressedText": "#07040F",
+        "press": "bounce",
+        "pressScale": 1.06,
+        "inset": 1
+      },
+      "func": { "border": "#FF2BD1", "glow": "#99FF2BD1", "textGlow": "#FF2BD1", "pressedBackground": "#FF2BD1" },
+      "enter": { "material": "solid", "background": { "colors": ["#FF2BD1", "#7A2BFF"], "angle": 0 }, "text": "#FFFFFF", "glow": "#FF2BD1" },
+      "space": { "label": "▁▁▁", "fontScale": 0.9 }
+    },
+    "popup": { "background": "#120A24", "text": "#00F0FF", "pressedBackground": "#FF2BD1", "pressedText": "#07040F" },
+    "chips": { "background": "#120A24", "text": "#E6FCFF", "border": "#5500F0FF" }
+  }
+}

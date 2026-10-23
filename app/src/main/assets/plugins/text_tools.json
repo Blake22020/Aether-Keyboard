@@ -1,0 +1,26 @@
+{
+  "id": "builtin.text-tools",
+  "name": "Текст",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Преобразования выделенного текста или последнего слова: регистр, раскладка, транслит, кавычки",
+  "icon": "✨",
+  "actions": [
+    { "title": "Исправить раскладку", "icon": "@layout_swap", "type": "transform", "transform": "layout_swap", "pinned": true },
+    { "title": "Посчитать", "icon": "🧮", "type": "transform", "transform": "calc" },
+    { "title": "camelCase", "icon": "🐫", "type": "transform", "transform": "camel" },
+    { "title": "snake_case", "icon": "🐍", "type": "transform", "transform": "snake" },
+    { "title": "𝗕𝗼𝗹𝗱 (латиница)", "icon": "𝗕", "type": "transform", "transform": "bold" },
+    { "title": "x²", "icon": "²", "type": "transform", "transform": "superscript" },
+    { "title": "ВЕРХНИЙ", "icon": "🔠", "type": "transform", "transform": "upper" },
+    { "title": "нижний", "icon": "🔡", "type": "transform", "transform": "lower" },
+    { "title": "Каждое С Большой", "icon": "Aa", "type": "transform", "transform": "title" },
+    { "title": "Транслит", "icon": "🔤", "type": "transform", "transform": "translit" },
+    { "title": "«Ёлочки»", "icon": "«»", "type": "transform", "transform": "wrap", "prefix": "«", "suffix": "»" },
+    { "title": "(Скобки)", "icon": "()", "type": "transform", "transform": "wrap", "prefix": "(", "suffix": ")" },
+    { "title": "З̶а̶ч̶е̶р̶к̶н̶у̶т̶ь̶", "icon": "S̶", "type": "transform", "transform": "strike" },
+    { "title": "сАрКаЗм", "icon": "🧽", "type": "transform", "transform": "mock" },
+    { "title": "Убрать лишние пробелы", "icon": "␣", "type": "transform", "transform": "trim", "scope": "text" },
+    { "title": "Сортировать строки", "icon": "↕️", "type": "transform", "transform": "sort_lines", "scope": "text" }
+  ]
+}

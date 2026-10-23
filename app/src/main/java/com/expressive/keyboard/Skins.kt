@@ -1,0 +1,700 @@
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.ui.text.ExperimentalTextApi::class
+)
+
+package com.expressive.keyboard
+
+import android.graphics.BitmapShader
+import android.graphics.RuntimeShader
+import android.graphics.Color as AndroidColor
+import android.graphics.Matrix as AndroidMatrix
+import android.graphics.Paint as AndroidPaint
+import android.graphics.Shader as AndroidShader
+import android.os.Build
+import androidx.annotation.RequiresApi
+import androidx.compose.runtime.*
+import androidx.compose.ui.geometry.*
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.*
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.*
+import org.json.JSONArray
+import org.json.JSONObject
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.sin
+
+// ============================================================================
+// 13. ОФОРМЛЕНИЕ ИЗ ПЛАГИНОВ (SKIN)
+// Плагин описывает, как рисовать каждую клавишу: материал (сплошной, жидкое
+// стекло, контур, неоморфизм), градиенты, тени, свечение, форму, анимацию
+// нажатия, шрифт и подписи. Стекло преломляет фон клавиатуры: на Android 13+
+// через AGSL-шейдер, на старых версиях — увеличенной размытой подложкой.
+// ============================================================================
+
+enum class SkinMaterial { SOLID, GLASS, OUTLINE, NEUMORPH, NONE }
+enum class SkinShape { ROUNDED, PILL, CUT, SQUIRCLE, WAVY }
+enum class PressEffect { SCALE, JELLY, BOUNCE, SINK, NONE }
+
+@Immutable
+sealed interface SkinFill {
+    @Immutable data class Solid(val color: Color) : SkinFill
+    @Immutable data class Gradient(val colors: List<Color>, val angle: Float, val radial: Boolean) : SkinFill
+}
+
+val SkinFill.primary: Color
+    get() = when (this) {
+        is SkinFill.Solid -> color
+        is SkinFill.Gradient -> colors.first()
+    }
+
+/** Угол в градусах: 0 — слева направо, 90 — сверху вниз. */
+fun SkinFill.brush(rect: Rect): Brush = when (this) {
+    is SkinFill.Solid -> SolidColor(color)
+    is SkinFill.Gradient -> if (radial) {
+        Brush.radialGradient(colors, rect.center, (max(rect.width, rect.height) / 2f).coerceAtLeast(1f))
+    } else {
+        val rad = angle * PI / 180.0
+        val dx = cos(rad).toFloat()
+        val dy = sin(rad).toFloat()
+        val half = (abs(dx) * rect.width + abs(dy) * rect.height) / 2f
+        Brush.linearGradient(colors, rect.center - Offset(dx * half, dy * half), rect.center + Offset(dx * half, dy * half))
+    }
+}
+
+@Immutable
+data class GlassSpec(
+    val blur: Float = 14f,          // dp, размытие фона под стеклом
+    val refraction: Float = 0.6f,   // 0..1, насколько края «ломают» картинку
+    val dispersion: Float = 0.25f,  // 0..1, радужная кайма на краях
+    val highlight: Float = 0.7f,    // 0..1, блик сверху
+    val rim: Float = 0.7f,          // 0..1, светлый ободок
+    val frost: Float = 0f,          // 0..1, молочная дымка
+    val tint: Color? = null
+)
+
+@Immutable
+data class KeyStyle(
+    val material: SkinMaterial? = null,
+    val fill: SkinFill? = null,
+    val pressedFill: SkinFill? = null,
+    val text: Color? = null,
+    val pressedText: Color? = null,
+    val border: SkinFill? = null,
+    val borderWidth: Float? = null,
+    val radius: Float? = null,
+    val pressedRadius: Float? = null,
+    val shape: SkinShape? = null,
+    val shadow: Float? = null,
+    val shadowColor: Color? = null,
+    val shadowY: Float? = null,
+    val glow: Color? = null,
+    val textGlow: Color? = null,
+    val glass: GlassSpec? = null,
+    val fontScale: Float? = null,
+    val fontWeight: Int? = null,
+    val italic: Boolean? = null,
+    val label: String? = null,
+    val press: PressEffect? = null,
+    val pressScale: Float? = null,
+    val inset: Float? = null,
+    val hideHint: Boolean? = null
+) {
+    /** Поля этого стиля важнее полей base. */
+    infix fun over(base: KeyStyle): KeyStyle = KeyStyle(
+        material ?: base.material, fill ?: base.fill, pressedFill ?: base.pressedFill, text ?: base.text,
+        pressedText ?: base.pressedText, border ?: base.border, borderWidth ?: base.borderWidth, radius ?: base.radius,
+        pressedRadius ?: base.pressedRadius, shape ?: base.shape, shadow ?: base.shadow, shadowColor ?: base.shadowColor,
+        shadowY ?: base.shadowY, glow ?: base.glow, textGlow ?: base.textGlow, glass ?: base.glass,
+        fontScale ?: base.fontScale, fontWeight ?: base.fontWeight, italic ?: base.italic, label ?: base.label,
+        press ?: base.press, pressScale ?: base.pressScale, inset ?: base.inset, hideHint ?: base.hideHint
+    )
+}
+
+@Immutable
+data class SkinOrb(val color: Color, val x: Float, val y: Float, val r: Float)
+
+@Immutable
+data class KeyboardSkin(
+    val background: SkinFill? = null,
+    val orbs: List<SkinOrb> = emptyList(),
+    val styles: Map<String, KeyStyle> = emptyMap(),
+    val popup: KeyStyle? = null,
+    val chips: KeyStyle? = null,
+    val trail: Color? = null,
+    val colors: Map<String, Int> = emptyMap(),
+    val corner: Float? = null,
+    val font: String? = null
+) {
+    val usesGlass: Boolean = styles.values.any { it.material == SkinMaterial.GLASS } ||
+        popup?.material == SkinMaterial.GLASS || chips?.material == SkinMaterial.GLASS
+    val glassBlur: Float = styles.values.mapNotNull { it.glass?.blur }.maxOrNull() ?: GlassSpec().blur
+    val hasBackground: Boolean get() = background != null || orbs.isNotEmpty()
+
+    /** "*" → группа (letter/func) → digit → тип клавиши → "key:<подпись>". */
+    fun styleFor(type: KeyType, label: String): KeyStyle? {
+        val chain = ArrayList<String>(5)
+        chain += "*"
+        when (type) {
+            KeyType.CHARACTER -> {
+                chain += "letter"
+                if (label.length == 1 && label[0].isDigit()) chain += "digit"
+            }
+            KeyType.SHIFT -> { chain += "func"; chain += "shift" }
+            KeyType.BACKSPACE -> { chain += "func"; chain += "backspace" }
+            KeyType.MODE_SYMBOLS, KeyType.SYMBOLS_PAGE -> { chain += "func"; chain += "mode" }
+            KeyType.GLOBE -> { chain += "func"; chain += "globe" }
+            KeyType.STICKERS -> { chain += "func"; chain += "emoji" }
+            KeyType.SPACE -> chain += "space"
+            KeyType.ENTER -> chain += "enter"
+            KeyType.SPACER -> return null
+        }
+        if (type == KeyType.CHARACTER) chain += "key:${label.lowercase()}"
+        var acc: KeyStyle? = null
+        for (sel in chain) {
+            val s = styles[sel] ?: continue
+            acc = if (acc == null) s else s over acc
+        }
+        return acc
+    }
+
+    fun fontFamily(fallback: FontFamily): FontFamily = when (font) {
+        "serif" -> FontFamily.Serif
+        "mono", "monospace" -> FontFamily.Monospace
+        "sans" -> FontFamily.SansSerif
+        "cursive" -> FontFamily.Cursive
+        else -> fallback
+    }
+
+    /** Цвета оформления поверх настроек (как у темы, но без записи в настройки). */
+    fun applyColors(s: KeyboardSettings): KeyboardSettings {
+        if (colors.isEmpty()) return s
+        return s.copy(
+            colorBackground = colors["background"] ?: s.colorBackground,
+            colorKey = colors["key"] ?: s.colorKey,
+            colorKeyText = colors["keyText"] ?: s.colorKeyText,
+            colorFunc = colors["func"] ?: s.colorFunc,
+            colorFuncText = colors["funcText"] ?: s.colorFuncText,
+            colorAccent = colors["accent"] ?: s.colorAccent,
+            colorAccentText = colors["accentText"] ?: s.colorAccentText
+        )
+    }
+}
+
+val LocalSkin = staticCompositionLocalOf<KeyboardSkin?> { null }
+val LocalBackdrop = staticCompositionLocalOf<Backdrop?> { null }
+
+// ------------------------------------------------------------------ разбор JSON
+
+object SkinParser {
+    private val SELECTORS = setOf("*", "letter", "digit", "func", "shift", "backspace", "mode", "globe", "emoji", "space", "enter")
+
+    private fun color(s: String?, field: String): Color? {
+        if (s.isNullOrBlank()) return null
+        val c = PluginParser.parseColor(s) ?: throw IllegalArgumentException("$field: неверный цвет «$s»")
+        return Color(c)
+    }
+
+    private fun colors(a: JSONArray, field: String): List<Color> {
+        val list = (0 until min(a.length(), 8)).mapNotNull { color(a.optString(it), field) }
+        require(list.isNotEmpty()) { "$field: пустой градиент" }
+        return if (list.size == 1) list + list else list
+    }
+
+    fun fill(v: Any?, field: String): SkinFill? = when (v) {
+        null, JSONObject.NULL -> null
+        is String -> color(v, field)?.let { SkinFill.Solid(it) }
+        is JSONArray -> SkinFill.Gradient(colors(v, field), 90f, false)
+        is JSONObject -> {
+            val arr = v.optJSONArray("colors")
+            if (arr == null) color(v.optString("color"), field)?.let { SkinFill.Solid(it) }
+            else SkinFill.Gradient(colors(arr, field), v.optDouble("angle", 90.0).toFloat(), v.optString("type") == "radial")
+        }
+        else -> throw IllegalArgumentException("$field: ожидается цвет или градиент")
+    }
+
+    private fun JSONObject.f(name: String): Float? = if (has(name)) optDouble(name).toFloat().takeIf { !it.isNaN() } else null
+    private fun JSONObject.b(name: String): Boolean? = if (has(name)) optBoolean(name) else null
+
+    private inline fun <reified T : Enum<T>> JSONObject.e(name: String): T? {
+        val raw = optString(name).uppercase()
+        if (raw.isEmpty()) return null
+        return enumValues<T>().firstOrNull { it.name == raw }
+            ?: throw IllegalArgumentException("$name: «${optString(name)}» — допустимо ${enumValues<T>().joinToString { it.name.lowercase() }}")
+    }
+
+    fun glass(o: JSONObject): GlassSpec {
+        val d = GlassSpec()
+        return GlassSpec(
+            blur = o.f("blur")?.coerceIn(0f, 40f) ?: d.blur,
+            refraction = o.f("refraction")?.coerceIn(0f, 1f) ?: d.refraction,
+            dispersion = o.f("dispersion")?.coerceIn(0f, 1f) ?: d.dispersion,
+            highlight = o.f("highlight")?.coerceIn(0f, 1f) ?: d.highlight,
+            rim = o.f("rim")?.coerceIn(0f, 1f) ?: d.rim,
+            frost = o.f("frost")?.coerceIn(0f, 1f) ?: d.frost,
+            tint = color(o.optString("tint"), "glass.tint")
+        )
+    }
+
+    fun style(o: JSONObject, name: String): KeyStyle {
+        val material = o.e<SkinMaterial>("material")
+        val border = fill(o.opt("border"), "$name.border")
+        return KeyStyle(
+            material = material,
+            fill = fill(o.opt("background"), "$name.background"),
+            pressedFill = fill(o.opt("pressedBackground"), "$name.pressedBackground"),
+            text = color(o.optString("text"), "$name.text"),
+            pressedText = color(o.optString("pressedText"), "$name.pressedText"),
+            border = border,
+            borderWidth = o.f("borderWidth")?.coerceIn(0f, 8f) ?: if (border != null) 1f else null,
+            radius = o.f("radius")?.coerceIn(0f, 64f),
+            pressedRadius = o.f("pressedRadius")?.coerceIn(0f, 64f),
+            shape = o.e<SkinShape>("shape"),
+            shadow = o.f("shadow")?.coerceIn(0f, 24f),
+            shadowColor = color(o.optString("shadowColor"), "$name.shadowColor"),
+            shadowY = o.f("shadowY")?.coerceIn(-16f, 16f),
+            glow = color(o.optString("glow"), "$name.glow"),
+            textGlow = color(o.optString("textGlow"), "$name.textGlow"),
+            glass = o.optJSONObject("glass")?.let { glass(it) } ?: if (material == SkinMaterial.GLASS) GlassSpec() else null,
+            fontScale = o.f("fontScale")?.coerceIn(0.4f, 2f),
+            fontWeight = if (o.has("fontWeight")) o.optInt("fontWeight").coerceIn(100, 900) else null,
+            italic = o.b("italic"),
+            label = o.optString("label").takeIf { o.has("label") }?.take(12),
+            press = o.e<PressEffect>("press"),
+            pressScale = o.f("pressScale")?.coerceIn(0.6f, 1.3f),
+            inset = o.f("inset")?.coerceIn(0f, 12f),
+            hideHint = o.b("hideHint")
+        )
+    }
+
+    fun parse(o: JSONObject): KeyboardSkin {
+        val kb = o.optJSONObject("keyboard") ?: JSONObject()
+        val orbs = kb.optJSONArray("orbs")?.let { a ->
+            (0 until min(a.length(), 12)).mapNotNull { i ->
+                val b = a.optJSONObject(i) ?: return@mapNotNull null
+                val c = color(b.optString("color"), "keyboard.orbs") ?: return@mapNotNull null
+                SkinOrb(
+                    c, b.optDouble("x", 0.5).toFloat().coerceIn(-0.5f, 1.5f), b.optDouble("y", 0.5).toFloat().coerceIn(-0.5f, 1.5f),
+                    b.optDouble("r", 0.35).toFloat().coerceIn(0.02f, 2f)
+                )
+            }
+        }.orEmpty()
+        val styles = LinkedHashMap<String, KeyStyle>()
+        o.optJSONObject("keys")?.let { k ->
+            k.keys().forEach { sel ->
+                require(sel in SELECTORS || sel.startsWith("key:")) { "keys: неизвестный селектор «$sel»" }
+                styles[sel] = style(k.getJSONObject(sel), sel)
+            }
+        }
+        val colors = HashMap<String, Int>()
+        o.optJSONObject("colors")?.let { c ->
+            c.keys().forEach { key -> if (key in PluginParser.COLOR_KEYS) PluginParser.parseColor(c.optString(key))?.let { colors[key] = it } }
+        }
+        return KeyboardSkin(
+            background = fill(kb.opt("background"), "keyboard.background"),
+            orbs = orbs,
+            styles = styles,
+            popup = o.optJSONObject("popup")?.let { style(it, "popup") },
+            chips = o.optJSONObject("chips")?.let { style(it, "chips") },
+            trail = color(kb.optString("trail"), "keyboard.trail"),
+            colors = colors,
+            corner = kb.f("corner")?.coerceIn(0f, 48f),
+            font = kb.optString("font").lowercase().takeIf { it.isNotEmpty() }
+        )
+    }
+}
+
+// ------------------------------------------------------------------ подложка для стекла
+
+/** Размытая копия фона клавиатуры: стеклянные клавиши «видят» её под собой. */
+@Stable
+class Backdrop {
+    var coords: LayoutCoordinates? = null
+    var bitmap by mutableStateOf<ImageBitmap?>(null)
+    /** Пикселей подложки на пиксель клавиатуры. */
+    var scale = 1f
+}
+
+internal fun DrawScope.drawSkinBackground(skin: KeyboardSkin, area: Size) {
+    val rect = Rect(Offset.Zero, area)
+    skin.background?.let { drawRect(it.brush(rect), size = area) }
+    for (o in skin.orbs) {
+        val c = Offset(o.x * area.width, o.y * area.height)
+        val r = o.r * max(area.width, area.height)
+        drawCircle(Brush.radialGradient(listOf(o.color, o.color.copy(alpha = 0f)), c, r), r, c)
+    }
+}
+
+/** Рисует фон в уменьшенную картинку и размывает её. Вызывается в фоне, раз на размер/фон. */
+internal fun renderBackdrop(
+    width: Int,
+    height: Int,
+    density: Density,
+    skin: KeyboardSkin,
+    bg: Color,
+    image: ImageBitmap?,
+    dim: Float
+): Pair<ImageBitmap, Float> {
+    val blurPx = with(density) { skin.glassBlur.dp.toPx() }
+    val s = if (skin.glassBlur < 4f) 0.5f else 0.25f
+    val bw = max(1, (width * s).roundToInt())
+    val bh = max(1, (height * s).roundToInt())
+    val bmp = ImageBitmap(bw, bh, ImageBitmapConfig.Argb8888)
+    CanvasDrawScope().draw(density, LayoutDirection.Ltr, Canvas(bmp), Size(bw.toFloat(), bh.toFloat())) {
+        drawRect(bg.copy(alpha = 1f))
+        scale(s, s, pivot = Offset.Zero) {
+            val area = Size(width.toFloat(), height.toFloat())
+            drawSkinBackground(skin, area)
+            if (image != null) {
+                val k = max(width / image.width.toFloat(), height / image.height.toFloat())
+                val sw = (width / k).roundToInt().coerceIn(1, image.width)
+                val sh = (height / k).roundToInt().coerceIn(1, image.height)
+                drawImage(
+                    image, IntOffset((image.width - sw) / 2, (image.height - sh) / 2), IntSize(sw, sh),
+                    IntOffset.Zero, IntSize(width, height), filterQuality = FilterQuality.Low
+                )
+                if (dim > 0f) drawRect(bg.copy(alpha = dim), size = area)
+            }
+        }
+    }
+    val r = (blurPx * s / 2f).roundToInt()
+    if (r > 0) {
+        val ab = bmp.asAndroidBitmap()
+        val px = IntArray(bw * bh)
+        ab.getPixels(px, 0, bw, 0, 0, bw, bh)
+        repeat(3) { boxBlur(px, bw, bh, r) }
+        ab.setPixels(px, 0, bw, 0, 0, bw, bh)
+    }
+    return bmp to s
+}
+
+/** Разделимое размытие «коробкой»; три прохода ≈ гауссово. */
+private fun boxBlur(px: IntArray, w: Int, h: Int, r: Int) {
+    val tmp = IntArray(px.size)
+    pass(px, tmp, w, h, r, true)
+    pass(tmp, px, w, h, r, false)
+}
+
+private fun pass(src: IntArray, dst: IntArray, w: Int, h: Int, r: Int, horizontal: Boolean) {
+    val lines = if (horizontal) h else w
+    val len = if (horizontal) w else h
+    val div = 2 * r + 1
+    for (line in 0 until lines) {
+        fun idx(i: Int): Int {
+            val c = i.coerceIn(0, len - 1)
+            return if (horizontal) line * w + c else c * w + line
+        }
+        var sr = 0
+        var sg = 0
+        var sb = 0
+        for (i in -r..r) {
+            val p = src[idx(i)]
+            sr += (p shr 16) and 0xFF
+            sg += (p shr 8) and 0xFF
+            sb += p and 0xFF
+        }
+        for (i in 0 until len) {
+            dst[idx(i)] = (0xFF shl 24) or ((sr / div) shl 16) or ((sg / div) shl 8) or (sb / div)
+            val out = src[idx(i - r)]
+            val inp = src[idx(i + r + 1)]
+            sr += ((inp shr 16) and 0xFF) - ((out shr 16) and 0xFF)
+            sg += ((inp shr 8) and 0xFF) - ((out shr 8) and 0xFF)
+            sb += (inp and 0xFF) - (out and 0xFF)
+        }
+    }
+}
+
+// ------------------------------------------------------------------ отрисовка клавиши
+
+/** Кэш одной клавиши: путь, шейдеры, Paint — без аллокаций на кадр. */
+internal class SkinKeyCache {
+    val path = Path()
+    val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG)
+    val matrix = AndroidMatrix()
+    var runtime: Any? = null
+    var bitmapShader: BitmapShader? = null
+    var bitmapFor: ImageBitmap? = null
+}
+
+internal fun buildKeyPath(path: Path, shape: SkinShape, rect: Rect, r: Float) {
+    path.reset()
+    when (shape) {
+        SkinShape.ROUNDED -> path.addRoundRect(RoundRect(rect, CornerRadius(r, r)))
+        SkinShape.PILL -> {
+            val pr = min(rect.width, rect.height) / 2f
+            path.addRoundRect(RoundRect(rect, CornerRadius(pr, pr)))
+        }
+        SkinShape.CUT -> {
+            val c = r.coerceAtMost(min(rect.width, rect.height) / 2f)
+            path.moveTo(rect.left + c, rect.top)
+            path.lineTo(rect.right - c, rect.top)
+            path.lineTo(rect.right, rect.top + c)
+            path.lineTo(rect.right, rect.bottom - c)
+            path.lineTo(rect.right - c, rect.bottom)
+            path.lineTo(rect.left + c, rect.bottom)
+            path.lineTo(rect.left, rect.bottom - c)
+            path.lineTo(rect.left, rect.top + c)
+            path.close()
+        }
+        SkinShape.SQUIRCLE -> {
+            // суперэллипс |x|^4 + |y|^4 = 1, растянутый по клавише
+            val cx = rect.center.x
+            val cy = rect.center.y
+            val a = rect.width / 2f
+            val b = rect.height / 2f
+            val n = 48
+            for (i in 0 until n) {
+                val t = i * 2.0 * PI / n
+                val ct = cos(t)
+                val st = sin(t)
+                val x = cx + a * (abs(ct).pow(0.5) * if (ct < 0) -1 else 1).toFloat()
+                val y = cy + b * (abs(st).pow(0.5) * if (st < 0) -1 else 1).toFloat()
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            path.close()
+        }
+        SkinShape.WAVY -> {
+            val tmp = buildWavyPath(WavySpec(ShapeProfile.SINE, 10, 0.06f), 0f, 0f, 1f)
+            val m = AndroidMatrix()
+            m.setScale(rect.width / 2f, rect.height / 2f)
+            m.postTranslate(rect.center.x, rect.center.y)
+            val ap = tmp.asAndroidPath()
+            ap.transform(m)
+            path.addPath(ap.asComposePath())
+        }
+    }
+}
+
+private fun DrawScope.outerShadow(c: SkinKeyCache, blur: Float, dx: Float, dy: Float, color: Color) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || blur <= 0.5f || color.alpha <= 0.01f) return
+    drawIntoCanvas { cv ->
+        val nc = cv.nativeCanvas
+        val ap = c.path.asAndroidPath()
+        nc.save()
+        nc.clipOutPath(ap)
+        c.paint.style = AndroidPaint.Style.FILL
+        c.paint.shader = null
+        c.paint.color = AndroidColor.BLACK
+        c.paint.setShadowLayer(blur, dx, dy, color.toArgb())
+        nc.drawPath(ap, c.paint)
+        c.paint.clearShadowLayer()
+        nc.restore()
+    }
+}
+
+/**
+ * Клавиша в стиле плагина. p — прогресс нажатия 0..1, restR/pressR — скругление по умолчанию,
+ * keyPos — положение клавиши относительно фона клавиатуры (для стекла).
+ */
+internal fun DrawScope.drawSkinKey(
+    st: KeyStyle,
+    base: KeyColors,
+    p: Float,
+    restR: Float,
+    pressR: Float,
+    c: SkinKeyCache,
+    backdrop: Backdrop?,
+    keyPos: () -> Offset?
+) {
+    val inset = (st.inset ?: 0f).dp.toPx()
+    val rect = Rect(inset, inset, size.width - inset, size.height - inset)
+    if (rect.width <= 1f || rect.height <= 1f) return
+    val m = min(rect.width, rect.height)
+    val r0 = st.radius?.dp?.toPx() ?: restR
+    val r1 = st.pressedRadius?.dp?.toPx() ?: if (st.radius != null) r0 else pressR
+    val r = lerpF(r0, r1, p).coerceIn(0f, m / 2f)
+    buildKeyPath(c.path, st.shape ?: SkinShape.ROUNDED, rect, r)
+    val material = st.material ?: SkinMaterial.SOLID
+    val fill = st.fill ?: SkinFill.Solid(base.bg)
+    val pressed = st.pressedFill ?: SkinFill.Solid(base.activeBg)
+    val dark = base.bg.alpha < 0.05f || base.bg.luminance() < 0.4f
+
+    // тень: нажатая клавиша «прижимается» к фону
+    val shadow = st.shadow ?: if (material == SkinMaterial.NEUMORPH) 7f else 0f
+    if (shadow > 0f) {
+        val blur = shadow.dp.toPx() * (1f - 0.5f * p)
+        val off = (st.shadowY ?: shadow * 0.45f).dp.toPx() * (1f - 0.7f * p)
+        if (material == SkinMaterial.NEUMORPH) {
+            outerShadow(c, blur, off, off, st.shadowColor ?: Color.Black.copy(alpha = if (dark) 0.55f else 0.22f))
+            outerShadow(c, blur, -off, -off, Color.White.copy(alpha = if (dark) 0.07f else 0.75f))
+        } else {
+            outerShadow(c, blur, 0f, off, st.shadowColor ?: Color.Black.copy(alpha = 0.3f))
+        }
+    }
+    // свечение: у контура горит всегда, у остальных — при нажатии
+    st.glow?.let { g ->
+        val k = if (material == SkinMaterial.OUTLINE) 0.55f + 0.45f * p else p
+        if (k > 0.01f) outerShadow(c, 12.dp.toPx(), 0f, 0f, g.copy(alpha = g.alpha * k))
+    }
+
+    when (material) {
+        SkinMaterial.SOLID, SkinMaterial.NEUMORPH -> {
+            drawPath(c.path, fill.brush(rect))
+            if (p > 0.001f) drawPath(c.path, pressed.brush(rect), alpha = p)
+        }
+        SkinMaterial.OUTLINE, SkinMaterial.NONE -> {
+            st.fill?.let { drawPath(c.path, it.brush(rect)) }
+            if (p > 0.001f) drawPath(c.path, pressed.brush(rect), alpha = p * if (material == SkinMaterial.NONE) 0.6f else 0.4f)
+        }
+        SkinMaterial.GLASS -> drawGlass(st, st.glass ?: GlassSpec(), pressed, p, rect, r, c, backdrop, keyPos, dark)
+    }
+
+    val bw = st.borderWidth ?: if (material == SkinMaterial.OUTLINE) 1.5f else 0f
+    if (bw > 0f) {
+        val brush = (st.border ?: SkinFill.Solid(base.fg.copy(alpha = 0.55f))).brush(rect)
+        drawPath(c.path, brush, style = Stroke(bw.dp.toPx()))
+    }
+}
+
+private fun DrawScope.drawGlass(
+    st: KeyStyle,
+    g: GlassSpec,
+    pressed: SkinFill,
+    p: Float,
+    rect: Rect,
+    r: Float,
+    c: SkinKeyCache,
+    backdrop: Backdrop?,
+    keyPos: () -> Offset?,
+    dark: Boolean
+) {
+    val bmp = backdrop?.bitmap
+    val pos = if (bmp != null) keyPos() else null
+    if (bmp != null && pos != null) {
+        val s = backdrop.scale
+        val zoom = 1f + 0.1f * g.refraction + 0.04f * p // линза чуть сильнее под пальцем
+        if (Build.VERSION.SDK_INT >= 33 && g.refraction > 0.01f) {
+            GlassShader.draw(this, c, bmp, s, pos, rect, r, zoom, g)
+        } else {
+            val sw = (rect.width * s / zoom).coerceIn(1f, bmp.width.toFloat())
+            val sh = (rect.height * s / zoom).coerceIn(1f, bmp.height.toFloat())
+            val sx = ((pos.x + rect.center.x) * s - sw / 2f).coerceIn(0f, bmp.width - sw)
+            val sy = ((pos.y + rect.center.y) * s - sh / 2f).coerceIn(0f, bmp.height - sh)
+            clipPath(c.path) {
+                drawImage(
+                    bmp, IntOffset(sx.roundToInt(), sy.roundToInt()),
+                    IntSize(sw.roundToInt().coerceIn(1, bmp.width - sx.roundToInt()), sh.roundToInt().coerceIn(1, bmp.height - sy.roundToInt())),
+                    IntOffset(rect.left.roundToInt(), rect.top.roundToInt()),
+                    IntSize(rect.width.roundToInt(), rect.height.roundToInt()),
+                    filterQuality = FilterQuality.Low
+                )
+            }
+        }
+    }
+    // тонировка
+    val fill = st.fill
+    if (fill != null) drawPath(c.path, fill.brush(rect))
+    else drawPath(c.path, g.tint ?: Color.White.copy(alpha = if (dark) 0.08f else 0.22f))
+    if (g.frost > 0f) drawPath(c.path, Color.White.copy(alpha = 0.22f * g.frost))
+    if (p > 0.001f) drawPath(c.path, pressed.brush(rect), alpha = 0.55f * p)
+
+    val hl = g.highlight
+    if (hl > 0f) {
+        drawPath(
+            c.path,
+            Brush.verticalGradient(
+                0f to Color.White.copy(alpha = 0.38f * hl),
+                0.42f to Color.Transparent,
+                0.85f to Color.Transparent,
+                1f to Color.White.copy(alpha = 0.12f * hl),
+                startY = rect.top, endY = rect.bottom
+            )
+        )
+        val spot = Offset(rect.left + rect.width * 0.3f, rect.top + rect.height * 0.12f)
+        val sr = min(rect.width, rect.height) * 0.9f
+        drawPath(c.path, Brush.radialGradient(listOf(Color.White.copy(alpha = 0.2f * hl), Color.Transparent), spot, sr))
+    }
+    val rim = g.rim
+    if (rim > 0f) {
+        drawPath(
+            c.path,
+            Brush.linearGradient(
+                listOf(
+                    Color.White.copy(alpha = 0.9f * rim), Color.White.copy(alpha = 0.12f * rim),
+                    Color.White.copy(alpha = 0.02f), Color.White.copy(alpha = 0.5f * rim)
+                ),
+                rect.topLeft, rect.bottomRight
+            ),
+            style = Stroke(1.25.dp.toPx())
+        )
+    }
+}
+
+/** Настоящее преломление: края стекла «загибают» фон внутрь, с лёгкой радужной каймой. */
+@RequiresApi(33)
+internal object GlassShader {
+    private const val SRC = """
+uniform shader img;
+uniform float2 origin;
+uniform float2 size;
+uniform float radius;
+uniform float refr;
+uniform float disp;
+
+float sdf(float2 p, float2 b, float r) {
+    float2 q = abs(p) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+half4 main(float2 fc) {
+    float2 b = size * 0.5;
+    float2 p = fc - origin - b;
+    float d = sdf(p, b, radius);
+    float2 e = float2(1.0, 0.0);
+    float2 n = float2(sdf(p + e.xy, b, radius) - sdf(p - e.xy, b, radius),
+                      sdf(p + e.yx, b, radius) - sdf(p - e.yx, b, radius));
+    n = n / max(length(n), 0.0001);
+    float band = min(b.x, b.y);
+    float t = clamp(1.0 + d / band, 0.0, 1.0);
+    float2 off = -n * refr * t * t * t;
+    half4 c = img.eval(fc + off);
+    if (disp > 0.0) {
+        c.r = img.eval(fc + off * (1.0 + disp)).r;
+        c.b = img.eval(fc + off * (1.0 - disp)).b;
+    }
+    return half4(c.rgb, 1.0);
+}
+"""
+
+    fun draw(ds: DrawScope, c: SkinKeyCache, bmp: ImageBitmap, s: Float, pos: Offset, rect: Rect, r: Float, zoom: Float, g: GlassSpec) {
+        val rs = c.runtime as? RuntimeShader ?: RuntimeShader(SRC).also { c.runtime = it }
+        if (c.bitmapFor !== bmp) {
+            c.bitmapShader = BitmapShader(bmp.asAndroidBitmap(), AndroidShader.TileMode.CLAMP, AndroidShader.TileMode.CLAMP)
+            c.bitmapFor = bmp
+        }
+        val bs = c.bitmapShader ?: return
+        c.matrix.reset()
+        c.matrix.setScale(1f / s, 1f / s)         // пиксели подложки → координаты клавиатуры
+        c.matrix.postTranslate(-pos.x, -pos.y)    // → координаты клавиши
+        c.matrix.postScale(zoom, zoom, rect.center.x, rect.center.y)
+        bs.setLocalMatrix(c.matrix)
+        rs.setInputShader("img", bs)
+        rs.setFloatUniform("origin", rect.left, rect.top)
+        rs.setFloatUniform("size", rect.width, rect.height)
+        rs.setFloatUniform("radius", r)
+        rs.setFloatUniform("refr", g.refraction * min(rect.width, rect.height) * 0.38f)
+        rs.setFloatUniform("disp", g.dispersion * 0.4f)
+        ds.drawPath(c.path, ShaderBrush(rs))
+    }
+}
+
+/** Фон стеклянных панелей и чипов, где подложку не видно: светлая дымка и ободок. */
+internal fun DrawScope.drawGlassChip(rect: Rect, radius: Float, tint: Color?) {
+    val rr = RoundRect(rect, CornerRadius(radius, radius))
+    val path = Path().apply { addRoundRect(rr) }
+    drawPath(path, tint ?: Color.White.copy(alpha = 0.14f))
+    drawPath(path, Brush.verticalGradient(0f to Color.White.copy(alpha = 0.22f), 0.5f to Color.Transparent, startY = rect.top, endY = rect.bottom))
+    drawPath(
+        path,
+        Brush.linearGradient(listOf(Color.White.copy(alpha = 0.6f), Color.White.copy(alpha = 0.05f), Color.White.copy(alpha = 0.35f)), rect.topLeft, rect.bottomRight),
+        style = Stroke(1.dp.toPx())
+    )
+}

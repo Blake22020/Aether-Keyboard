@@ -1,0 +1,20 @@
+{
+  "id": "builtin.navigation",
+  "name": "Правка",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Выделение, копирование, вставка, отмена и перемещение курсора",
+  "icon": "✂️",
+  "actions": [
+    { "title": "Выделить всё", "icon": "▣", "type": "key", "key": "select_all" },
+    { "title": "Копировать", "icon": "📋", "type": "key", "key": "copy" },
+    { "title": "Вырезать", "icon": "✂️", "type": "key", "key": "cut" },
+    { "title": "Вставить", "icon": "📥", "type": "key", "key": "paste" },
+    { "title": "Отменить", "icon": "↶", "type": "key", "key": "undo" },
+    { "title": "Повторить", "icon": "↷", "type": "key", "key": "redo" },
+    { "title": "В начало", "icon": "⇤", "type": "key", "key": "home" },
+    { "title": "В конец", "icon": "⇥", "type": "key", "key": "end" },
+    { "title": "Удалить слово", "icon": "⌫", "type": "key", "key": "delete_word" },
+    { "title": "Tab", "icon": "↹", "type": "key", "key": "tab" }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "id": "builtin.datetime",
+  "name": "Дата и время",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Вставка даты и времени, сокращения :date, :time, :now",
+  "icon": "📅",
+  "actions": [
+    { "title": "Сегодня", "icon": "📅", "type": "insert", "text": "{date}" },
+    { "title": "Сейчас", "icon": "🕒", "type": "insert", "text": "{time}" },
+    { "title": "Дата и время", "icon": "🗓️", "type": "insert", "text": "{datetime}" },
+    { "title": "ISO-дата", "icon": "#", "type": "insert", "text": "{date:yyyy-MM-dd}" },
+    { "title": "День недели", "icon": "📆", "type": "insert", "text": "{date:EEEE}" }
+  ],
+  "shortcuts": {
+    ":date": "{date}",
+    ":time": "{time}",
+    ":now": "{datetime}"
+  }
+}

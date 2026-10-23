@@ -1,0 +1,29 @@
+{
+  "id": "builtin.neumorph",
+  "name": "Неоморфизм",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Мягкие выпуклые клавиши из того же материала, что и фон. При нажатии клавиша вдавливается.",
+  "icon": "☁️",
+  "skin": {
+    "keyboard": { "background": "#E4E9F2" },
+    "colors": { "background": "#E4E9F2", "key": "#E4E9F2", "keyText": "#3B4559", "func": "#E4E9F2", "funcText": "#3B4559", "accent": "#5B7CFA", "accentText": "#FFFFFF" },
+    "keys": {
+      "*": {
+        "material": "neumorph",
+        "background": "#E4E9F2",
+        "pressedBackground": "#D7DDE8",
+        "text": "#3B4559",
+        "shadow": 6,
+        "shadowColor": "#59A3B1C6",
+        "press": "sink",
+        "radius": 16,
+        "inset": 2
+      },
+      "enter": { "background": { "colors": ["#6E8BFF", "#4C6EF5"], "angle": 135 }, "text": "#FFFFFF", "pressedBackground": "#4C6EF5" },
+      "shift": { "text": "#5B7CFA" }
+    },
+    "popup": { "background": "#E4E9F2", "text": "#3B4559", "pressedBackground": "#5B7CFA", "pressedText": "#FFFFFF" },
+    "chips": { "background": "#DCE2EC", "text": "#3B4559" }
+  }
+}

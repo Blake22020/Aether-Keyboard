@@ -1,0 +1,45 @@
+{
+  "id": "builtin.liquid-glass",
+  "name": "Жидкое стекло",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Клавиши из жидкого стекла: преломляют цветной фон по краям, блик сверху, светлый ободок и «желейное» нажатие. На Android 13+ — настоящее преломление шейдером.",
+  "icon": "🫧",
+  "skin": {
+    "keyboard": {
+      "background": { "colors": ["#1B1F4B", "#3A1C71", "#0F4C5C"], "angle": 120 },
+      "orbs": [
+        { "color": "#FF5F9E", "x": 0.12, "y": 0.35, "r": 0.32 },
+        { "color": "#00E0FF", "x": 0.82, "y": 0.2, "r": 0.3 },
+        { "color": "#FFC24B", "x": 0.55, "y": 0.95, "r": 0.34 },
+        { "color": "#7C5CFF", "x": 0.35, "y": 0.75, "r": 0.25 }
+      ],
+      "trail": "#CCFFFFFF",
+      "corner": 32
+    },
+    "colors": { "accent": "#8AB4FF", "accentText": "#0B1430", "keyText": "#FFFFFF", "funcText": "#FFFFFF" },
+    "keys": {
+      "*": {
+        "material": "glass",
+        "glass": { "blur": 14, "refraction": 0.75, "dispersion": 0.35, "highlight": 0.8, "rim": 0.85 },
+        "text": "#FFFFFF",
+        "pressedText": "#FFFFFF",
+        "pressedBackground": "#668AB4FF",
+        "shadow": 6,
+        "shadowColor": "#40000000",
+        "press": "jelly",
+        "radius": 18,
+        "pressedRadius": 26,
+        "textGlow": "#66FFFFFF"
+      },
+      "func": { "glass": { "blur": 14, "refraction": 0.75, "dispersion": 0.35, "highlight": 0.8, "rim": 0.85, "frost": 0.35 } },
+      "space": { "shape": "pill" },
+      "enter": {
+        "background": { "colors": ["#998AB4FF", "#66B388FF"], "angle": 135 },
+        "shape": "pill"
+      }
+    },
+    "popup": { "material": "glass", "text": "#FFFFFF", "pressedBackground": "#8AB4FF", "pressedText": "#0B1430" },
+    "chips": { "material": "glass", "text": "#FFFFFF" }
+  }
+}
