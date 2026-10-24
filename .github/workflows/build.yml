@@ -20,8 +20,7 @@ jobs:
       - name: Android setup
         uses: ./.github/actions/android-setup
 
-      - name: Build Release APK (fast, recommended)
-        continue-on-error: true
+      - name: Build Release APK
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Build Debug APK
@@ -31,14 +30,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ExpressiveKeyboard-release-apk
+          name: AetherKeyboard-release-apk
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload Debug APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ExpressiveKeyboard-debug-apk
+          name: AetherKeyboard-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
