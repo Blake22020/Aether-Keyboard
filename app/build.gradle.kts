@@ -9,11 +9,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.expressive.keyboard"
+        applicationId = "dev.blake.aetherkeyboard"
         minSdk = 26
         targetSdk = 35
         versionCode = 15
-        versionName = "11.1.1"
+        versionName = "11.1.1-aether.1"
         vectorDrawables {
             useSupportLibrary = true
         }
