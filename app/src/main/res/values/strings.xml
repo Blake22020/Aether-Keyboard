@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Expressive Keyboard</string>
-    <string name="ime_name">Expressive Keyboard</string>
+    <string name="app_name">Aether Keyboard</string>
+    <string name="ime_name">Aether Keyboard</string>
     <string name="subtype_en">English (US)</string>
     <string name="subtype_ru">Русский</string>
 </resources>
