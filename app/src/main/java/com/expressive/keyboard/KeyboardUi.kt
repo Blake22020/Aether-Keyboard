@@ -388,6 +388,7 @@ internal fun KeyView(
     actions: KeyboardActions,
     glideEnabled: Boolean,
     numberRow: Boolean,
+    predictedKey: KeyModel?,
     modifier: Modifier
 ) {
     val pluginState = PluginRepository.active
@@ -420,6 +421,7 @@ internal fun KeyView(
     val cSettings by rememberUpdatedState(settings)
     val cActions by rememberUpdatedState(actions)
     val cGlide by rememberUpdatedState(glideEnabled)
+    val cPredicted by rememberUpdatedState(predictedKey)
     val cUpHint by rememberUpdatedState(upHint)
     val fr = shapeFractions(key.type)
     val capPx = with(LocalDensity.current) { settings.cornerRadiusDp.dp.toPx() }
@@ -667,8 +669,23 @@ internal fun KeyView(
                                 }
                                 when (gesture) {
                                     KeyGesture.RELEASED -> if (!instant) {
-                                        act.keyTouch(touchX, touchY)
-                                        act.commitKey(k, out)
+                                        // A modest, context-aware expansion into the neighbouring key.
+                                        // Normal keys, long presses, instant input and glide gestures remain unchanged.
+                                        val target = cPredicted?.takeIf { letterKey && it != k && lbl.length == 1 }
+                                        val snap = if (target != null) layer.coords?.let { glide.snapshot(it) } else null
+                                        val near = snap?.first?.get(target?.label?.lowercase()?.firstOrNull())
+                                        val position = origin()?.let { it + down.position }
+                                        val selfCenter = origin()?.let { it + Offset(size.width / 2f, size.height / 2f) }
+                                        val targetDistance = if (near != null && position != null) (position - near).getDistance() else Float.MAX_VALUE
+                                        val selfDistance = if (selfCenter != null && position != null) (position - selfCenter).getDistance() else 0f
+                                        if (target != null && targetDistance < size.width * 0.78f &&
+                                            targetDistance < selfDistance + size.width * 0.12f) {
+                                            act.keyTouch(0f, 0f)
+                                            act.commitKey(target, target.text(upper))
+                                        } else {
+                                            act.keyTouch(touchX, touchY)
+                                            act.commitKey(k, out)
+                                        }
                                     }
                                     KeyGesture.CANCELED -> Unit
                                     KeyGesture.SWIPE_UP -> {
@@ -1691,6 +1708,8 @@ internal fun KeyGrid(
                         actions = actions,
                         glideEnabled = glideEnabled,
                         numberRow = isNumberRow,
+                        predictedKey = if (isChar && glideEnabled) rows.asSequence().flatMap { it.keys.asSequence() }
+                            .firstOrNull { it.type == KeyType.CHARACTER && it.label.length == 1 && it.label[0].lowercaseChar() == state.likelyNextLetter } else null,
                         modifier = Modifier.weight(key.weight).fillMaxHeight()
                     )
                 }
