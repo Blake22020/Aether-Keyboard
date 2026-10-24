@@ -615,7 +615,7 @@ internal fun KeysPage(settings: KeyboardSettings) {
     SettingsSection("Размеры") {
         SliderItem(
             icon = Icons.Rounded.Height, title = "Высота клавиш",
-            value = settings.keyHeightDp, range = 44f..68f,
+            value = settings.keyHeightDp, range = 24f..68f,
             format = { "${it.roundToInt()} dp" },
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_height_dp", v) } }
         )
