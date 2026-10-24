@@ -29,7 +29,13 @@ class ShareImageActivity : Activity() {
         if (source != null) {
             runCatching {
                 val dir = File(filesDir, "shared_images").apply { mkdirs() }
-                val dest = File(dir, "image_${System.currentTimeMillis()}")
+                val extension = when (intent.type?.lowercase()) {
+                    "image/jpeg" -> "jpg"
+                    "image/webp" -> "webp"
+                    "image/gif" -> "gif"
+                    else -> "png"
+                }
+                val dest = File(dir, "image_${System.currentTimeMillis()}.$extension")
                 contentResolver.openInputStream(source)?.use { input ->
                     dest.outputStream().use { output ->
                         val buffer = ByteArray(64 * 1024)
