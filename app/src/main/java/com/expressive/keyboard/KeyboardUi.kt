@@ -1708,7 +1708,7 @@ internal fun KeyGrid(
                         actions = actions,
                         glideEnabled = glideEnabled,
                         numberRow = isNumberRow,
-                        predictedKey = if (isChar && glideEnabled) rows.asSequence().flatMap { it.keys.asSequence() }
+                        predictedKey = if (isChar) rows.asSequence().flatMap { it.keys.asSequence() }
                             .firstOrNull { it.type == KeyType.CHARACTER && it.label.length == 1 && it.label[0].lowercaseChar() == state.likelyNextLetter } else null,
                         modifier = Modifier.weight(key.weight).fillMaxHeight()
                     )
