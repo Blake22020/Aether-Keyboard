@@ -181,7 +181,9 @@ data class PredictionSnapshot(
     val autoCorrection: String?,
     val forWord: String,
     val ownCorrection: String? = autoCorrection,
-    val usedSystem: Boolean = false
+    val usedSystem: Boolean = false,
+    /** Слово есть в словаре (или его подтвердила системная проверка). */
+    val known: Boolean = false
 )
 
 /** Словарь одного языка: слова по убыванию частоты. */
@@ -1270,7 +1272,7 @@ object WordPredictorEngine {
                 )
             }
         }
-        return PredictionSnapshot(chips, fix, clean, own, sys != null)
+        return PredictionSnapshot(chips, fix, clean, own, sys != null, known)
     }
 
     /** Второй по вероятности вариант исправления — для правой подсказки. */

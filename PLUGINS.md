@@ -435,8 +435,29 @@ Shift и ⌫ добавляются в последний ряд сами. Не�
 ### popup и chips
 
 `popup` — всплывающая буква и варианты: `background`, `pressedBackground` (выбранный вариант), `text`, `pressedText`,
-`material: glass`. `chips` — подсказки и панель инструментов: `background`, `pressedBackground` (средняя подсказка),
-`text`, `pressedText`, `border`, `borderWidth`, `material: glass`.
+`material: glass`, `border`, `radius` (с ним вместо волнистой «печеньки» рисуется скруглённый прямоугольник).
+`chips` — подсказки и панель инструментов: `background`, `pressedBackground` (средняя подсказка),
+`text`, `pressedText`, `border`, `borderWidth`, `material: glass`; `material: none` — подсказки просто текстом
+через тонкие разделители, как в Gboard и iOS.
+
+### buttons — кнопки по краям строки подсказок
+
+Меню и микрофон. Тот же формат, что у клавиш: `material` (`none` — только значок, `solid`, `glass`, `outline`,
+`neumorph`), `background`, `pressedBackground`, `text` (цвет значка), `border`, `glow`, `shadow`. Без `buttons`
+кнопки рисуются волнистыми «печеньками» в цвет акцента.
+
+### dark — тёмная тема
+
+Объект с теми же разделами (`keyboard`, `colors`, `keys`, `popup`, `chips`, `buttons`), который накладывается
+поверх оформления, когда включена тёмная тема. Указывайте только то, что отличается:
+
+```json
+"colors": { "background": "#D1D4DA", "key": "#FFFFFF", "keyText": "#1C1C1E" },
+"dark": {
+  "colors": { "background": "#1C1C1E", "key": "#4A4A4E", "keyText": "#F2F2F7" },
+  "keys": { "func": { "background": "#2E2E31" } }
+}
+```
 
 ### Градиенты
 

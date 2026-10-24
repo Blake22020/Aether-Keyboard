@@ -1,29 +1,47 @@
 {
   "id": "builtin.neumorph",
   "name": "Неоморфизм",
-  "version": "1.0",
+  "version": "2.0",
   "author": "Expressive Keyboard",
-  "description": "Мягкие выпуклые клавиши из того же материала, что и фон. При нажатии клавиша вдавливается.",
+  "description": "Мягкие выпуклые клавиши из того же материала, что и фон: свет сверху слева, тень снизу справа. При нажатии клавиша вдавливается. Светлый и тёмный вариант.",
   "icon": "☁️",
   "skin": {
-    "keyboard": { "background": "#E4E9F2" },
-    "colors": { "background": "#E4E9F2", "key": "#E4E9F2", "keyText": "#3B4559", "func": "#E4E9F2", "funcText": "#3B4559", "accent": "#5B7CFA", "accentText": "#FFFFFF" },
+    "keyboard": { "corner": 28 },
+    "colors": {
+      "background": "#E3E7EE", "key": "#E3E7EE", "keyText": "#434B5C",
+      "func": "#E3E7EE", "funcText": "#6A7386", "accent": "#5D74F2", "accentText": "#FFFFFF"
+    },
     "keys": {
       "*": {
         "material": "neumorph",
-        "background": "#E4E9F2",
-        "pressedBackground": "#D7DDE8",
-        "text": "#3B4559",
-        "shadow": 6,
-        "shadowColor": "#59A3B1C6",
+        "pressedBackground": "#D8DDE6",
+        "shadow": 7,
+        "shadowY": 3.5,
+        "shadowColor": "#8FA3AFC4",
         "press": "sink",
-        "radius": 16,
-        "inset": 2
+        "radius": 14,
+        "pressedRadius": 14,
+        "inset": 3,
+        "hideHint": true
       },
-      "enter": { "background": { "colors": ["#6E8BFF", "#4C6EF5"], "angle": 135 }, "text": "#FFFFFF", "pressedBackground": "#4C6EF5" },
-      "shift": { "text": "#5B7CFA" }
+      "shift": { "background": "#E3E7EE", "text": "#5D74F2" },
+      "enter": { "background": { "colors": ["#7088FF", "#5068EC"], "angle": 135 }, "text": "#FFFFFF", "pressedBackground": "#4A60DD" }
     },
-    "popup": { "background": "#E4E9F2", "text": "#3B4559", "pressedBackground": "#5B7CFA", "pressedText": "#FFFFFF" },
-    "chips": { "background": "#DCE2EC", "text": "#3B4559" }
+    "popup": { "radius": 14, "background": "#EEF1F6", "text": "#434B5C", "pressedBackground": "#5D74F2", "pressedText": "#FFFFFF" },
+    "chips": { "material": "none", "text": "#434B5C" },
+    "buttons": { "material": "neumorph", "shadow": 6, "shadowY": 3, "shadowColor": "#8FA3AFC4", "text": "#6A7386" },
+    "dark": {
+      "colors": {
+        "background": "#262A31", "key": "#262A31", "keyText": "#D9DEE8",
+        "func": "#262A31", "funcText": "#A3ABBB", "accent": "#7389FF", "accentText": "#FFFFFF"
+      },
+      "keys": {
+        "*": { "pressedBackground": "#20242A", "shadowColor": "#F20E1013" },
+        "shift": { "background": "#262A31", "text": "#7389FF" }
+      },
+      "popup": { "background": "#30353D", "text": "#E6E9F0", "pressedBackground": "#7389FF" },
+      "chips": { "text": "#D9DEE8" },
+      "buttons": { "shadowColor": "#F20E1013", "text": "#A3ABBB" }
+    }
   }
 }

@@ -187,7 +187,7 @@ fun buildKeyPalette(cs: ColorScheme, s: KeyboardSettings): KeyPalette {
         accent = accent, onAccent = onAccent,
         accentSoft = accentSoft.copy(alpha = accentSoft.alpha * (0.5f + a / 2f)), onAccentSoft = onAccentSoft,
         panel = panel.copy(alpha = panel.alpha * (0.4f + a * 0.6f)),
-        outline = cs.outlineVariant,
+        outline = if (s.colorBackground != 0 || s.colorKeyText != 0) onLetter.copy(alpha = 0.16f) else cs.outlineVariant,
         muted = if (s.colorKeyText != 0 || s.colorKey != 0) onLetter.copy(alpha = 0.66f) else cs.onSurfaceVariant
     )
 }
@@ -399,7 +399,17 @@ internal fun KeyView(
     val scope = rememberCoroutineScope()
     val skin = LocalSkin.current
     val backdrop = LocalBackdrop.current
-    val style = remember(skin, key.type, key.label) { skin?.styleFor(key.type, key.label) }
+    val colors = remember(key.type, shift, palette) { keyColors(key.type, shift, palette) }
+    val style = remember(skin, key.type, key.label, shift, colors) {
+        val st = skin?.styleFor(key.type, key.label)
+        // включённый Shift заливается акцентом, иначе в стекле и контурах его состояние не видно
+        if (st != null && key.type == KeyType.SHIFT && shift != ShiftState.OFF) {
+            st.copy(
+                fill = SkinFill.Solid(if (st.material == SkinMaterial.GLASS) colors.bg.copy(alpha = 0.85f) else colors.bg),
+                text = colors.fg, textGlow = null
+            )
+        } else st
+    }
     val skinCache = remember { SkinKeyCache() }
     val isChar = key.type == KeyType.CHARACTER
     val upHint = if (isChar) remember(label, variants) { hintFor(label, variants) } else null
@@ -411,7 +421,6 @@ internal fun KeyView(
     val cActions by rememberUpdatedState(actions)
     val cGlide by rememberUpdatedState(glideEnabled)
     val cUpHint by rememberUpdatedState(upHint)
-    val colors = remember(key.type, shift, palette) { keyColors(key.type, shift, palette) }
     val fr = shapeFractions(key.type)
     val capPx = with(LocalDensity.current) { settings.cornerRadiusDp.dp.toPx() }
     val border = settings.showKeyBorders
@@ -821,6 +830,8 @@ internal fun BoxScope.PopupBubbles(s: PopupState, palette: KeyPalette, font: Fon
     val selFill = skinPopup?.pressedFill?.primary ?: palette.accent
     val baseText = skinPopup?.text ?: palette.onAccentSoft
     val selText = skinPopup?.pressedText ?: palette.onAccent
+    val boxRadius = skinPopup?.radius
+    val popupBorder = skinPopup?.border?.primary
     val style = remember(font) { TextStyle(fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp) }
     val items = if (s.expanded) s.variants else listOf(s.primary)
     val layouts = remember(items, style) { items.map { measurer.measure(AnnotatedString(it), style = style) } }
@@ -849,10 +860,20 @@ internal fun BoxScope.PopupBubbles(s: PopupState, palette: KeyPalette, font: Fon
             val r = lerpF(baseR, selR, e) * sc
             val cx = if (n == 1) left + width / 2f else left + slot * (i + 0.5f)
             val cy = baseCy - e * 4.dp.toPx()
-            buildWavyPath(spec, cx, cy, r, path)
+            if (boxRadius != null) {
+                path.reset()
+                val hw = r * 0.82f
+                val rr = min(boxRadius.dp.toPx(), hw)
+                path.addRoundRect(RoundRect(Rect(cx - hw, cy - r, cx + hw, cy + r), CornerRadius(rr, rr)))
+            } else buildWavyPath(spec, cx, cy, r, path)
             if (!glass) drawPath(path, palette.background, style = Stroke(ring * 2f))
+            if (boxRadius != null && !glass) {
+                // мягкая тень под прямоугольной подсказкой
+                translate(top = 1.5.dp.toPx()) { drawPath(path, Color.Black.copy(alpha = 0.18f)) }
+            }
             drawPath(path, lerp(baseFill, selFill, e))
             if (glass) drawPath(path, Color.White.copy(alpha = 0.55f), style = Stroke(1.2.dp.toPx()))
+            else if (popupBorder != null) drawPath(path, popupBorder, style = Stroke(1.2.dp.toPx()))
             val lay = layouts[i]
             scale(scale = r / selR, pivot = Offset(cx, cy)) {
                 drawText(
@@ -869,6 +890,7 @@ internal fun BoxScope.PopupBubbles(s: PopupState, palette: KeyPalette, font: Fon
 internal fun Modifier.chipBackground(style: KeyStyle?, fallback: Color, shape: androidx.compose.ui.graphics.Shape): Modifier {
     val clipped = this.clip(shape)
     if (style == null) return clipped.background(fallback)
+    if (style.material == SkinMaterial.NONE && style.fill == null) return clipped
     return clipped.drawBehind {
         val rect = Rect(Offset.Zero, size)
         when {
@@ -910,6 +932,40 @@ internal fun CookieButton(
     )
 }
 
+/** Круглая кнопка строки подсказок в стиле оформления: стекло, контур, неоморфизм или просто значок. */
+@Composable
+internal fun SkinButton(
+    style: KeyStyle,
+    palette: KeyPalette,
+    size: Dp,
+    onClick: () -> Unit,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val down by interaction.collectIsPressedAsState()
+    val p by animateFloatAsState(if (down) 1f else 0f, spring(dampingRatio = 0.6f, stiffness = 700f), label = "skinButton")
+    val holder = remember { CoordsHolder() }
+    val cache = remember { SkinKeyCache() }
+    val backdrop = LocalBackdrop.current
+    val st = remember(style) { style.copy(shape = style.shape ?: SkinShape.PILL) }
+    val base = remember(palette) { KeyColors(palette.func, palette.onFunc, palette.accentSoft, palette.onAccentSoft) }
+    Box(
+        modifier = Modifier
+            .size(size)
+            .padding(3.dp)
+            .onGloballyPositioned { holder.coords = it }
+            .graphicsLayer {
+                val s = 1f - 0.08f * p
+                scaleX = s
+                scaleY = s
+            }
+            .drawBehind { drawSkinKey(st, base, p, size.toPx() / 2f, size.toPx() / 2f, cache, backdrop) { keyPosIn(holder, backdrop) } }
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
 @Composable
 internal fun HeaderBar(
     state: KeyboardState,
@@ -922,33 +978,42 @@ internal fun HeaderBar(
     val panel = state.panel
     val candidates = state.candidates
     val showCandidates = candidates.isNotEmpty() && (panel == ActivePanel.KEYBOARD)
-    val tools = !showCandidates && (state.toolbarOpen || panel != ActivePanel.KEYBOARD || !settings.showSuggestions)
+    // только что скопированное — предложить вставить, даже если подсказки выключены
+    val offer = state.clipOffer.takeIf { panel == ActivePanel.KEYBOARD && !state.toolbarOpen && !showCandidates }
+    val tools = !showCandidates && offer == null && (state.toolbarOpen || panel != ActivePanel.KEYBOARD || !settings.showSuggestions)
     val button = if (settings.landscape) 38.dp else 46.dp
+    val skinButtons = LocalSkin.current?.buttons
+    val btnFg = skinButtons?.let { it.text ?: palette.onFunc } ?: palette.onAccent
+    val headerButton: @Composable (() -> Unit, @Composable BoxScope.() -> Unit) -> Unit = { onClick, content ->
+        if (skinButtons != null) SkinButton(skinButtons, palette, button, onClick, content)
+        else CookieButton(spec, palette.accent, button, onClick, content)
+    }
     Row(
         modifier = Modifier.fillMaxWidth().height(if (settings.landscape) 40.dp else 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        CookieButton(spec, palette.accent, button, onClick = { actions.headerMenu() }) {
+        headerButton({ actions.headerMenu() }) {
             if (panel != ActivePanel.KEYBOARD) {
-                SlotIcon("back", palette.onAccent, 22.dp) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.onAccent, modifier = Modifier.size(22.dp)) }
+                SlotIcon("back", btnFg, 22.dp) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
             } else {
-                SlotIcon("menu", palette.onAccent, 22.dp) { GlyphIcon(Glyph.GRID, palette.onAccent, 22.dp) }
+                SlotIcon("menu", btnFg, 22.dp) { GlyphIcon(Glyph.GRID, btnFg, 22.dp) }
             }
         }
         Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
             if (settings.panelAnimations) {
                 AnimatedContent(
-                    targetState = tools,
+                    targetState = tools to (offer != null),
                     transitionSpec = {
                         (fadeIn(tween(140)) + scaleIn(spring(dampingRatio = 0.7f, stiffness = 700f), initialScale = 0.9f)) togetherWith
                             fadeOut(tween(90))
                     },
                     label = "headerSwap"
-                ) { showTools ->
+                ) { (showTools, _) ->
                     when {
                         showTools -> ToolbarPill(state, actions, settings, palette)
                         showCandidates -> CandidateStrip(candidates, actions, palette, font)
+                        offer != null -> ClipOfferStrip(offer, actions, palette, font)
                         else -> SuggestionStrip(state, actions, palette, font)
                     }
                 }
@@ -956,13 +1021,14 @@ internal fun HeaderBar(
                 when {
                     tools -> ToolbarPill(state, actions, settings, palette)
                     showCandidates -> CandidateStrip(candidates, actions, palette, font)
+                    offer != null -> ClipOfferStrip(offer, actions, palette, font)
                     else -> SuggestionStrip(state, actions, palette, font)
                 }
             }
         }
         if (settings.showMicButton) {
-            CookieButton(spec, palette.accent, button, onClick = { actions.togglePanel(ActivePanel.VOICE) }) {
-                SlotIcon("mic", palette.onAccent, 22.dp) { Icon(Icons.Outlined.Mic, null, tint = palette.onAccent, modifier = Modifier.size(22.dp)) }
+            headerButton({ actions.togglePanel(ActivePanel.VOICE) }) {
+                SlotIcon("mic", btnFg, 22.dp) { Icon(Icons.Outlined.Mic, null, tint = btnFg, modifier = Modifier.size(22.dp)) }
             }
         }
     }
@@ -971,7 +1037,12 @@ internal fun HeaderBar(
 @Composable
 internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
     val chips = state.suggestions
-    val chipStyle = LocalSkin.current?.chips
+    val skin = LocalSkin.current
+    if (skin?.plainChips == true) {
+        PlainSuggestionStrip(chips, actions, skin.chips?.text ?: palette.onLetter, font)
+        return
+    }
+    val chipStyle = skin?.chips
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1014,14 +1085,88 @@ internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, pal
     }
 }
 
+/** Только что скопированное: нажатие вставляет, ✕ убирает. Как в Gboard. */
+@Composable
+internal fun ClipOfferStrip(entry: String, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
+    val image = ClipImages.isImage(entry)
+    Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.weight(1f, fill = false).height(38.dp).clip(RoundedCornerShape(19.dp)).background(palette.accentSoft)
+                .clickable { actions.pasteClipOffer() }.padding(start = 6.dp, end = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (image) {
+                ClipThumb(entry, Modifier.size(28.dp).clip(RoundedCornerShape(8.dp)), palette.func, maxPx = 96)
+            } else {
+                Box(Modifier.size(28.dp).clip(CircleShape).background(palette.accent), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.ContentPaste, null, tint = palette.onAccent, modifier = Modifier.size(16.dp))
+                }
+            }
+            Text(
+                if (image) tr("Вставить картинку") else entry.replace('\n', ' '),
+                color = palette.onAccentSoft, fontFamily = font, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.width(6.dp))
+        Box(
+            Modifier.size(34.dp).clip(CircleShape).clickable { actions.dismissClipOffer() },
+            contentAlignment = Alignment.Center
+        ) { Icon(Icons.Rounded.Close, tr("Скрыть"), tint = palette.onFunc.copy(alpha = 0.7f), modifier = Modifier.size(18.dp)) }
+    }
+}
+
+/** Подсказки как в Gboard и iOS: три слова через тонкие разделители, главное — жирное по центру. */
+@Composable
+internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: KeyboardActions, fg: Color, font: FontFamily) {
+    Row(Modifier.fillMaxWidth().height(40.dp), verticalAlignment = Alignment.CenterVertically) {
+        for (i in 0 until 3) {
+            val chip = chips.getOrNull(i) ?: SuggestionChipModel.EMPTY
+            val primary = i == 1
+            if (i > 0) Box(Modifier.width(1.dp).height(20.dp).background(fg.copy(alpha = 0.18f)))
+            val interaction = remember { MutableInteractionSource() }
+            val down by interaction.collectIsPressedAsState()
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (down) fg.copy(alpha = 0.1f) else Color.Transparent)
+                    .combinedClickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        enabled = !chip.isEmpty,
+                        onLongClick = { actions.forgetSuggestion(chip.commitWord) }
+                    ) { actions.pickSuggestion(chip) }
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!chip.isEmpty) {
+                    Text(
+                        text = chip.displayText,
+                        color = if (primary) fg else fg.copy(alpha = 0.82f),
+                        fontFamily = font,
+                        fontSize = 16.sp,
+                        fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** Варианты китайского и японского ввода: прокручиваемая лента, первый вариант — главный (его вставит пробел). */
 @Composable
 internal fun CandidateStrip(candidates: List<String>, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
     val listState = rememberLazyListState()
+    val plain = LocalSkin.current?.plainChips == true
     LaunchedEffect(candidates) { listState.scrollToItem(0) }
     LazyRow(
         state = listState,
-        modifier = Modifier.fillMaxWidth().height(40.dp).clip(CircleShape).background(palette.func),
+        modifier = Modifier.fillMaxWidth().height(40.dp).clip(CircleShape).background(if (plain) Color.Transparent else palette.func),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
         contentPadding = PaddingValues(horizontal = 4.dp)
@@ -1260,7 +1405,14 @@ internal fun ToolText(text: String, tint: Color, onClick: () -> Unit) {
 @Composable
 fun KeyboardRoot(state: KeyboardState, actions: KeyboardActions, voice: VoiceInput, onBackground: (Color, Boolean) -> Unit) {
     val raw by KeyboardPrefs.observe()
-    val skin = PluginRepository.activeSkin(raw)
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (raw.themeMode) {
+        "DARK", "AMOLED" -> true
+        "LIGHT" -> false
+        else -> systemDark
+    }
+    val baseSkin = PluginRepository.activeSkin(raw)
+    val skin = remember(baseSkin, dark) { baseSkin?.forMode(dark) }
     val configuration = LocalConfiguration.current
     val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val settings = remember(raw, skin, landscape, configuration.screenHeightDp) {

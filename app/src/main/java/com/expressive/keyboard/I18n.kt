@@ -97,10 +97,10 @@ internal val EN_STRINGS: Map<String, String> = hashMapOf(
     "Аа" to "Aa",
     // дизайны
     "Волнистые «печеньки», морфинг формы, округлый шрифт" to "Wavy “cookie” shapes, shape morphing, rounded font",
-    "Строго по гайдлайнам Google: круглые кнопки, системный шрифт, клавиши-таблетки" to "Strictly by Google's guidelines: round buttons, system font, pill keys",
-    "Прозрачное стекло с преломлением фона и бликами" to "Clear glass that refracts the background, with highlights",
-    "Плоские клавиши с лёгкой тенью, без лишних анимаций" to "Flat keys with a soft shadow, no extra animations",
-    "Тёмный фон и светящиеся контуры" to "Dark background and glowing outlines",
+    "Как Gboard: цвета Material You, строгие клавиши, подсказки текстом" to "Like Gboard: Material You colors, clean keys, text suggestions",
+    "Прозрачное стекло с преломлением и бликами, светлое и тёмное" to "Clear glass with refraction and highlights, light and dark",
+    "Белые клавиши на сером, синий Enter — привычно и спокойно" to "White keys on gray, blue Enter — familiar and calm",
+    "Почти чёрный фон, тонкие светящиеся контуры" to "Near-black background, thin glowing outlines",
     "Мягкие выпуклые клавиши из материала фона" to "Soft raised keys made of the background material",
     // тема и шрифт
     "Шрифт «{0}» применён" to "Font “{0}” applied",
@@ -462,7 +462,7 @@ internal val EN_STRINGS: Map<String, String> = hashMapOf(
     "Поиск эмодзи" to "Search emoji",
     "Найти эмодзи: кот, сердце, smile…" to "Find emoji: cat, heart, smile…",
     "Ничего не найдено" to "Nothing found",
-    "Скопируйте текст — он появится здесь" to "Copy some text — it will appear here",
+    "Скопируйте текст или картинку — они появятся здесь" to "Copy text or an image — it will appear here",
     "Закрепить" to "Pin",
     "Голосовой ввод" to "Voice input",
     "Разрешить микрофон" to "Allow microphone",
@@ -505,5 +505,15 @@ internal val EN_STRINGS: Map<String, String> = hashMapOf(
     "Справа от пробела. Удержание — ? ! … и другие знаки" to "Right of the space bar. Long press for ? ! … and more",
     "Своя клавиша слева от пробела" to "Custom key left of space",
     "Своя клавиша справа от пробела" to "Custom key right of space",
-    "Вставлено: {0}" to "Inserted: {0}"
+    "Вставлено: {0}" to "Inserted: {0}",
+    "Это поле не принимает картинки" to "This field doesn't accept images",
+    "Не удалось вставить картинку" to "Couldn't paste the image",
+    "Вставить картинку" to "Paste image",
+    "Скрыть" to "Dismiss",
+    "Другой голосовой ввод" to "Other voice input",
+    "Нет интернета для распознавания речи" to "No internet connection for speech recognition",
+    "Микрофон занят другим приложением" to "The microphone is in use by another app",
+    "Этот язык не поддерживается распознаванием" to "Speech recognition doesn't support this language",
+    "Распознавание не сработало. Попробуйте голосовой ввод другой клавиатуры" to "Recognition failed. Try another keyboard's voice input",
+    "На устройстве нет службы распознавания речи. Нажмите «Другой голосовой ввод»" to "This device has no speech recognition service. Tap “Other voice input”"
 )

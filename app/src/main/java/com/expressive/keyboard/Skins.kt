@@ -132,8 +132,36 @@ data class KeyboardSkin(
     val trail: Color? = null,
     val colors: Map<String, Int> = emptyMap(),
     val corner: Float? = null,
-    val font: String? = null
+    val font: String? = null,
+    /** Круглые кнопки по краям строки подсказок (меню, микрофон). */
+    val buttons: KeyStyle? = null,
+    /** Поправки для тёмной темы: накладываются поверх основного оформления. */
+    val dark: KeyboardSkin? = null
 ) {
+    /** Подсказки текстом через разделители, без «таблеток». */
+    val plainChips: Boolean get() = chips?.material == SkinMaterial.NONE
+
+    /** Оформление под светлую или тёмную тему. */
+    fun forMode(isDark: Boolean): KeyboardSkin {
+        val d = dark ?: return this
+        if (!isDark) return copy(dark = null)
+        val merged = LinkedHashMap(styles)
+        d.styles.forEach { (k, v) -> merged[k] = merged[k]?.let { v over it } ?: v }
+        fun pick(a: KeyStyle?, b: KeyStyle?) = if (a == null) b else if (b == null) a else a over b
+        return KeyboardSkin(
+            background = d.background ?: background,
+            orbs = d.orbs.ifEmpty { orbs },
+            styles = merged,
+            popup = pick(d.popup, popup),
+            chips = pick(d.chips, chips),
+            trail = d.trail ?: trail,
+            colors = colors + d.colors,
+            corner = d.corner ?: corner,
+            font = d.font ?: font,
+            buttons = pick(d.buttons, buttons)
+        )
+    }
+
     val usesGlass: Boolean = styles.values.any { it.material == SkinMaterial.GLASS } ||
         popup?.material == SkinMaterial.GLASS || chips?.material == SkinMaterial.GLASS
     val glassBlur: Float = styles.values.mapNotNull { it.glass?.blur }.maxOrNull() ?: GlassSpec().blur
@@ -275,7 +303,7 @@ object SkinParser {
         )
     }
 
-    fun parse(o: JSONObject): KeyboardSkin {
+    fun parse(o: JSONObject, nested: Boolean = false): KeyboardSkin {
         val kb = o.optJSONObject("keyboard") ?: JSONObject()
         val orbs = kb.optJSONArray("orbs")?.let { a ->
             (0 until min(a.length(), 12)).mapNotNull { i ->
@@ -307,7 +335,9 @@ object SkinParser {
             trail = color(kb.optString("trail"), "keyboard.trail"),
             colors = colors,
             corner = kb.f("corner")?.coerceIn(0f, 48f),
-            font = kb.optString("font").lowercase().takeIf { it.isNotEmpty() }
+            font = kb.optString("font").lowercase().takeIf { it.isNotEmpty() },
+            buttons = o.optJSONObject("buttons")?.let { style(it, "buttons") },
+            dark = if (nested) null else o.optJSONObject("dark")?.let { parse(it, true) }
         )
     }
 }
@@ -524,7 +554,7 @@ internal fun DrawScope.drawSkinKey(
         val off = (st.shadowY ?: shadow * 0.45f).dp.toPx() * (1f - 0.7f * p)
         if (material == SkinMaterial.NEUMORPH) {
             outerShadow(c, blur, off, off, st.shadowColor ?: Color.Black.copy(alpha = if (dark) 0.55f else 0.22f))
-            outerShadow(c, blur, -off, -off, Color.White.copy(alpha = if (dark) 0.07f else 0.75f))
+            outerShadow(c, blur, -off, -off, Color.White.copy(alpha = if (dark) 0.11f else 0.75f))
         } else {
             outerShadow(c, blur, 0f, off, st.shadowColor ?: Color.Black.copy(alpha = 0.3f))
         }

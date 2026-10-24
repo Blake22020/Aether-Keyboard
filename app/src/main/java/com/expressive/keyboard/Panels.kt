@@ -492,7 +492,7 @@ internal fun ClipboardPanel(state: KeyboardState, actions: KeyboardActions, pale
         }
         if (items.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(tr("Скопируйте текст — он появится здесь"), color = palette.muted, fontFamily = font)
+                Text(tr("Скопируйте текст или картинку — они появятся здесь"), color = palette.muted, fontFamily = font)
             }
         } else {
             LazyVerticalGrid(
@@ -503,28 +503,38 @@ internal fun ClipboardPanel(state: KeyboardState, actions: KeyboardActions, pale
             ) {
                 gridItems(items, key = { it }) { t ->
                     val isPinned = t in pinned
+                    val image = ClipImages.isImage(t)
                     Box(
-                        Modifier.fillMaxWidth().animateItem().clip(RoundedCornerShape(18.dp))
-                            .background(if (isPinned) palette.accentSoft else palette.letter)
-                            .combinedClickable(onLongClick = { actions.togglePinClip(t) }) { actions.commitText(t) }
+                        Modifier.fillMaxWidth().animateItem().clip(RoundedCornerShape(16.dp))
+                            .background(if (isPinned) palette.accentSoft else palette.onLetter.copy(alpha = 0.07f).compositeOver(palette.letter))
+                            .then(if (isPinned) Modifier.border(1.5.dp, palette.accent.copy(alpha = 0.6f), RoundedCornerShape(16.dp)) else Modifier)
+                            .combinedClickable(onLongClick = { actions.togglePinClip(t) }) { actions.commitClip(t) }
                     ) {
-                        Text(
-                            t, color = if (isPinned) palette.onAccentSoft else palette.onLetter, fontFamily = font, fontSize = 14.sp,
-                            maxLines = 3, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 34.dp)
-                        )
-                        Column(Modifier.align(Alignment.TopEnd).padding(2.dp)) {
+                        if (image) {
+                            // картинка — во всю плитку, как в Gboard
+                            ClipThumb(t, Modifier.fillMaxWidth().height(112.dp), palette.func)
+                        } else {
+                            Text(
+                                t, color = if (isPinned) palette.onAccentSoft else palette.onLetter, fontFamily = font, fontSize = 14.sp,
+                                maxLines = 4, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 34.dp)
+                            )
+                        }
+                        // на картинке значки — на тёмной подложке, чтобы читались на любом фоне
+                        val badgeBg = if (image) Color.Black.copy(alpha = 0.45f) else Color.Transparent
+                        val badgeFg = if (image) Color.White else palette.muted
+                        Column(Modifier.align(Alignment.TopEnd).padding(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Box(
-                                Modifier.size(30.dp).clip(CircleShape).clickable { actions.removeClip(t) },
+                                Modifier.size(28.dp).clip(CircleShape).background(badgeBg).clickable { actions.removeClip(t) },
                                 contentAlignment = Alignment.Center
-                            ) { Icon(Icons.Rounded.Close, "Удалить", tint = palette.muted, modifier = Modifier.size(16.dp)) }
+                            ) { Icon(Icons.Rounded.Close, tr("Удалить"), tint = badgeFg, modifier = Modifier.size(16.dp)) }
                             Box(
-                                Modifier.size(30.dp).clip(CircleShape).clickable { actions.togglePinClip(t) },
+                                Modifier.size(28.dp).clip(CircleShape).background(badgeBg).clickable { actions.togglePinClip(t) },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    if (isPinned) Icons.Rounded.PushPin else Icons.Outlined.PushPin, "Закрепить",
-                                    tint = if (isPinned) palette.accent else palette.muted, modifier = Modifier.size(16.dp)
+                                    if (isPinned) Icons.Rounded.PushPin else Icons.Outlined.PushPin, tr("Закрепить"),
+                                    tint = if (isPinned) palette.accent else badgeFg, modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
@@ -586,8 +596,10 @@ internal fun VoicePanel(
         if (!voice.hasPermission()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PillButton(tr("Разрешить микрофон"), palette.accent, palette.onAccent, font) { actions.openSettings() }
-                PillButton(tr("Системный ввод"), palette.func, palette.onFunc, font) { actions.openVoiceFallback() }
+                PillButton(tr("Другой голосовой ввод"), palette.func, palette.onFunc, font) { actions.openVoiceFallback() }
             }
+        } else if (voice.needsFallback) {
+            PillButton(tr("Другой голосовой ввод"), palette.accent, palette.onAccent, font) { actions.openVoiceFallback() }
         }
     }
 }

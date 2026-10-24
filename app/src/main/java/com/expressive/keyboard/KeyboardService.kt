@@ -9,6 +9,7 @@ package com.expressive.keyboard
 import android.Manifest
 import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -29,6 +30,7 @@ import android.os.VibratorManager
 import android.provider.OpenableColumns
 import android.provider.Settings
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.text.InputType
@@ -158,6 +160,8 @@ class KeyboardState {
     /** Печать свайпом разрешена в этом поле (не пароль, не почта/адрес). */
     var glideAllowed by mutableStateOf(true)
     val clipboard = mutableStateListOf<String>()
+    /** Только что скопированное: предлагается вставить одним нажатием над клавиатурой. */
+    var clipOffer by mutableStateOf<String?>(null)
     /** Закреплённые записи буфера: хранятся на диске и не стираются кнопкой «Очистить». */
     val pinnedClips = mutableStateListOf<String>()
 }
@@ -197,6 +201,10 @@ interface KeyboardActions {
     fun forgetSuggestion(word: String)
     /** Выбор варианта иероглифов/каны из ленты. */
     fun pickCandidate(index: Int) {}
+    /** Вставить запись буфера: текст или картинку. */
+    fun commitClip(entry: String) {}
+    fun pasteClipOffer() {}
+    fun dismissClipOffer() {}
 }
 
 @Stable
@@ -209,7 +217,20 @@ class VoiceInput(private val context: Context, private val onResult: (String) ->
         private set
     var rms by mutableFloatStateOf(0f)
         private set
+    /** Встроенное распознавание не работает — показать кнопку другого голосового ввода. */
+    var needsFallback by mutableStateOf(false)
+        private set
     private var recognizer: SpeechRecognizer? = null
+    /** Кто сейчас распознаёт: null — системный сервис по умолчанию, иначе явный компонент. */
+    private var engine: ComponentName? = null
+    private var onDevice = false
+    /** Варианты сервисов для этого запуска: если один падает сразу, пробуем следующий. */
+    private var options: List<Pair<ComponentName?, Boolean>> = emptyList()
+    private var optionIndex = 0
+    private var heardSomething = false
+    private var lastLanguage: KeyboardLanguage? = null
+    /** Идёт запуск/распознавание; после stop() поздние ошибки отмены не показываем. */
+    private var active = false
 
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -218,7 +239,9 @@ class VoiceInput(private val context: Context, private val onResult: (String) ->
         override fun onReadyForSpeech(params: Bundle?) {
             status = tr("Говорите…")
         }
-        override fun onBeginningOfSpeech() {}
+        override fun onBeginningOfSpeech() {
+            heardSomething = true
+        }
         override fun onRmsChanged(rmsdB: Float) {
             rms = rmsdB
         }
@@ -231,9 +254,33 @@ class VoiceInput(private val context: Context, private val onResult: (String) ->
         override fun onError(error: Int) {
             listening = false
             rms = 0f
-            status = tr("Не расслышал. Нажмите на микрофон ещё раз")
+            if (!active) return
+            // сервис не смог даже начать — пробуем следующий установленный
+            val broken = error == SpeechRecognizer.ERROR_CLIENT || error == SpeechRecognizer.ERROR_SERVER ||
+                error == 11 /* ERROR_SERVER_DISCONNECTED */ || error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+                error == 12 /* ERROR_LANGUAGE_NOT_SUPPORTED */ || error == 13 /* ERROR_LANGUAGE_UNAVAILABLE */
+            if (broken && !heardSomething && optionIndex + 1 < options.size) {
+                optionIndex++
+                destroyRecognizer()
+                lastLanguage?.let { launch(it) }
+                return
+            }
+            active = false
+            status = when (error) {
+                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> tr("Не расслышал. Нажмите на микрофон ещё раз")
+                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> tr("Нет интернета для распознавания речи")
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> tr("Нужен доступ к микрофону")
+                SpeechRecognizer.ERROR_AUDIO -> tr("Микрофон занят другим приложением")
+                12, 13 -> tr("Этот язык не поддерживается распознаванием")
+                else -> {
+                    needsFallback = true
+                    tr("Распознавание не сработало. Попробуйте голосовой ввод другой клавиатуры")
+                }
+            }
+            if (broken) destroyRecognizer()
         }
         override fun onResults(results: Bundle?) {
+            active = false
             listening = false
             rms = 0f
             val best = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
@@ -255,40 +302,114 @@ class VoiceInput(private val context: Context, private val onResult: (String) ->
             status = tr("Нужен доступ к микрофону")
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            status = tr("Распознавание речи недоступно на устройстве")
+        needsFallback = false
+        options = findEngines()
+        optionIndex = 0
+        if (options.isEmpty()) {
+            needsFallback = true
+            status = tr("На устройстве нет службы распознавания речи. Нажмите «Другой голосовой ввод»")
             return
         }
-        val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(context).also {
-            it.setRecognitionListener(listener)
-            recognizer = it
+        launch(language)
+    }
+
+    /**
+     * Все способы распознавания по порядку. На многих телефонах (Xiaomi, Honor, без сервисов Google по умолчанию)
+     * системный сервис не назначен и isRecognitionAvailable() возвращает false, хотя распознавание Google
+     * установлено, — тогда обращаемся к нему напрямую.
+     */
+    private fun findEngines(): List<Pair<ComponentName?, Boolean>> {
+        val out = ArrayList<Pair<ComponentName?, Boolean>>()
+        if (runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)) out += null to false
+        val services = runCatching {
+            context.packageManager.queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+        }.getOrDefault(emptyList())
+        val preferred = listOf("com.google.android.googlequicksearchbox", "com.google.android.tts", "com.google.android.as")
+        services.sortedBy { s -> preferred.indexOf(s.serviceInfo.packageName).let { if (it < 0) 99 else it } }.forEach { s ->
+            val c = ComponentName(s.serviceInfo.packageName, s.serviceInfo.name)
+            if (out.none { it.first == c }) out += c to false
+        }
+        if (Build.VERSION.SDK_INT >= 31 && runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }.getOrDefault(false)) {
+            out += null to true
+        }
+        return out
+    }
+
+    private fun launch(language: KeyboardLanguage) {
+        active = true
+        lastLanguage = language
+        heardSomething = false
+        val (component, local) = options[optionIndex]
+        val r = recognizer?.takeIf { engine == component && onDevice == local } ?: run {
+            destroyRecognizer()
+            val created = runCatching {
+                when {
+                    local && Build.VERSION.SDK_INT >= 31 -> SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                    component != null -> SpeechRecognizer.createSpeechRecognizer(context, component)
+                    else -> SpeechRecognizer.createSpeechRecognizer(context)
+                }
+            }.getOrNull()
+            if (created == null) {
+                if (optionIndex + 1 < options.size) {
+                    optionIndex++
+                    launch(language)
+                } else {
+                    needsFallback = true
+                    status = tr("Не удалось запустить распознавание")
+                }
+                return
+            }
+            created.setRecognitionListener(listener)
+            engine = component
+            onDevice = local
+            recognizer = created
+            created
         }
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, language.locale)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
         }
         partial = ""
         listening = true
         status = tr("Слушаю ({0})…", language.label)
         runCatching { r.startListening(intent) }.onFailure {
             listening = false
-            status = tr("Не удалось запустить распознавание")
+            destroyRecognizer()
+            if (optionIndex + 1 < options.size) {
+                optionIndex++
+                launch(language)
+            } else {
+                needsFallback = true
+                status = tr("Не удалось запустить распознавание")
+            }
         }
     }
 
+    private fun destroyRecognizer() {
+        runCatching { recognizer?.destroy() }
+        recognizer = null
+        engine = null
+        onDevice = false
+    }
+
     fun stop() {
+        active = false
         runCatching { recognizer?.cancel() }
         listening = false
         rms = 0f
     }
 
     fun release() {
-        runCatching { recognizer?.destroy() }
-        recognizer = null
+        destroyRecognizer()
         listening = false
     }
 }
+
+/** Сколько живёт предложение вставить только что скопированное. */
+private const val CLIP_OFFER_MS = 3 * 60_000L
+private val OFFER_BREAKERS = setOf(KeyType.CHARACTER, KeyType.SPACE, KeyType.BACKSPACE, KeyType.ENTER)
 
 private val PAIRS = mapOf('(' to ')', '[' to ']', '{' to '}', '«' to '»')
 
@@ -314,6 +435,12 @@ class ComposeKeyboardService : InputMethodService(),
     private val kb = KeyboardState()
     private lateinit var voice: VoiceInput
     private var clipboardManager: ClipboardManager? = null
+    /** Время копирования последней записи буфера, которую уже видели. */
+    private var lastClipStamp = -1L
+    private var clipOfferAt = 0L
+    /** Слово, на которое нажали: его варианты в строке подсказок, выбор заменяет слово целиком. */
+    private data class TapWord(val start: Int, val end: Int, val word: String)
+    private var tapWord: TapWord? = null
     private var inputView: View? = null
     private var navColor: Int? = null
     private var navLight = false
@@ -399,13 +526,14 @@ class ComposeKeyboardService : InputMethodService(),
         kb.language = dataPrefs().getString("last_language", null)?.let { id -> enabled.firstOrNull { it.id == id } } ?: enabled.first()
         WordPredictorEngine.onDictionaryLoaded = { if (composing.isEmpty() || precomputedFor != composing) schedulePredictions() }
         // ответ системной проверки пришёл, пока слово ещё набирается, — обновить подсказки
-        SystemSpell.onResult = { w -> if (composing == w) schedulePredictions() }
+        SystemSpell.onResult = { w -> if (composing == w || (composing.isEmpty() && tapWord?.word == w)) schedulePredictions() }
         WordPredictorEngine.prepare(this, kb.language)
         Cjk.prepare(this, kb.language)
         runCatching {
             val arr = JSONArray(dataPrefs().getString("pinned_clips", "[]"))
             for (i in 0 until arr.length()) kb.pinnedClips += arr.getString(i)
         }
+        ClipImages.cleanup(this, kb.pinnedClips)
         voice = VoiceInput(this) { text -> commitText("$text ") }
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboardManager?.addPrimaryClipChangedListener(clipListener)
@@ -468,6 +596,7 @@ class ComposeKeyboardService : InputMethodService(),
         super.onWindowShown()
         moveLifecycle(Lifecycle.State.RESUMED)
         syncClipboard()
+        if (kb.clipOffer != null && System.currentTimeMillis() - clipOfferAt > CLIP_OFFER_MS) kb.clipOffer = null
         applyWindowColors()
         ScriptHost.emit("show")
     }
@@ -573,13 +702,30 @@ class ComposeKeyboardService : InputMethodService(),
         val cls = (info?.inputType ?: 0) and InputType.TYPE_MASK_CLASS
         kb.symbolsPage = if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE ||
             cls == InputType.TYPE_CLASS_DATETIME) 1 else 0
-        kb.shift = if (autoCapAllowed() && ((info?.initialCapsMode ?: 0) != 0 || expSelStart <= 0)) {
-            ShiftState.SINGLE
-        } else ShiftState.OFF
+        tapWord = null
+        kb.shift = if (autoCapAllowed() && startsSentence(info)) ShiftState.SINGLE else ShiftState.OFF
         autoShift = kb.shift == ShiftState.SINGLE
         noCorrectWord = false
         schedulePredictions()
         if (ScriptHost.has("start")) ScriptHost.emit("start", scriptField())
+    }
+
+    /**
+     * Курсор стоит в начале предложения. Смотрим на сам текст: многие приложения отдают initialCapsMode
+     * и initialSelStart как попало, и после скрытия клавиатуры посреди фразы она открывалась с заглавной.
+     */
+    private fun startsSentence(info: EditorInfo?): Boolean {
+        val before = runCatching { currentInputConnection?.getTextBeforeCursor(64, 0) }.getOrNull()
+            ?: return (info?.initialCapsMode ?: 0) != 0 || (info?.initialSelStart ?: -1) == 0
+        return capsAfter(before)
+    }
+
+    private fun capsAfter(before: CharSequence): Boolean {
+        val trimmed = before.trimEnd()
+        if (trimmed.isEmpty()) return true
+        if (before.lastOrNull() == '\n') return true
+        // заглавная — только после знака конца предложения и пробела
+        return trimmed.length < before.length && trimmed.last() in ".!?…"
     }
 
     /** У письменностей без заглавных Shift включает второй ряд букв — его нельзя включать автоматически. */
@@ -623,7 +769,35 @@ class ComposeKeyboardService : InputMethodService(),
         autoSpace = false
         lastActionWasSpace = false
         glideWord = false
+        tapWord = null
+        if (newSelStart == newSelEnd && newSelStart >= 0) inspectCursor(newSelStart)
         schedulePredictions()
+    }
+
+    /** Курсор переставили: Shift по месту в предложении и слово под курсором для исправления. */
+    private fun inspectCursor(pos: Int) {
+        val ic = currentInputConnection ?: return
+        val before = runCatching { ic.getTextBeforeCursor(48, 0) }.getOrNull() ?: return
+        if (autoCapAllowed() && kb.shift != ShiftState.CAPS_LOCK) {
+            val cap = capsAfter(before)
+            if (cap != (kb.shift == ShiftState.SINGLE)) {
+                kb.shift = if (cap) ShiftState.SINGLE else ShiftState.OFF
+                autoShift = cap
+            }
+        }
+        if (!flags.suggestions || flags.isPassword || kb.language.composer != Composer.NONE) return
+        val after = runCatching { ic.getTextAfterCursor(48, 0) }.getOrNull() ?: return
+        var l = before.length
+        while (l > 0 && (isWordLetter(before[l - 1]) || before[l - 1] in "'’")) l--
+        var r = 0
+        while (r < after.length && (isWordLetter(after[r]) || after[r] in "'’")) r++
+        // слово должно уместиться в прочитанный кусок целиком
+        if ((l == 0 && before.length == 48) || r == 48) return
+        val word = (before.substring(l) + after.substring(0, r)).trim('\'', '’')
+        if (word.length < 2 || word.any { it.isDigit() }) return
+        val left = before.substring(l).takeWhile { it in "'’" }.length
+        val start = pos - (before.length - l) + left
+        tapWord = TapWord(start, start + word.length, word)
     }
 
     private fun isBelatedUpdate(oldStart: Int, newStart: Int, oldEnd: Int, newEnd: Int): Boolean {
@@ -647,6 +821,7 @@ class ComposeKeyboardService : InputMethodService(),
     private fun selectionStart(): Int = if (expSelStart < 0) -1 else min(expSelStart, expSelEnd)
 
     private fun icSetComposing(ic: InputConnection, word: String) {
+        tapWord = null
         if (composing.isEmpty() || composingStart < 0) composingStart = selectionStart()
         ic.setComposingText(word, 1)
         composing = word
@@ -655,6 +830,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     private fun icCommit(ic: InputConnection, text: String) {
+        tapWord = null
         val base = if (composing.isNotEmpty()) composingStart else selectionStart()
         ic.commitText(text, 1)
         composing = ""
@@ -664,6 +840,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     private fun icDeleteBefore(ic: InputConnection, count: Int) {
+        tapWord = null
         ic.deleteSurroundingText(count, 0)
         if (expSelStart >= 0 && expSelStart == expSelEnd) expect(max(0, expSelStart - count)) else expectUnknown()
         lastTypedChar = null
@@ -732,6 +909,11 @@ class ComposeKeyboardService : InputMethodService(),
             precomputedFor = ""
             return
         }
+        val tw = tapWord
+        if (tw != null && composing.isEmpty()) {
+            scheduleTapWord(tw)
+            return
+        }
         val word = composing
         val prev = lastCommittedWord
         val u = undo
@@ -760,7 +942,7 @@ class ComposeKeyboardService : InputMethodService(),
             }
             if (shortcut != null) {
                 // сокращение плагина показываем главной подсказкой
-                val expanded = PluginTemplates.expand(shortcut, clipboard = kb.clipboard.firstOrNull().orEmpty())
+                val expanded = PluginTemplates.expand(shortcut, clipboard = firstTextClip())
                 chips[1] = SuggestionChipModel("→ " + expanded.replace('\n', ' ').take(24), expanded, isPrimary = true, isKeepExact = true)
             } else if (personalShortcut != null) {
                 // сокращение из личного словаря Android
@@ -771,6 +953,45 @@ class ComposeKeyboardService : InputMethodService(),
             precomputedOwn = snap.ownCorrection
             precomputedFor = snap.forWord
         }
+    }
+
+    /** Варианты для слова, на которое нажали: только если оно с ошибкой или незнакомо. */
+    private fun scheduleTapWord(tw: TapWord) {
+        val lang = kb.language
+        val s = settings
+        val sys = if (systemSpellAllowed()) {
+            SystemSpell.request(this, lang, tw.word)
+            SystemSpell.cached(lang, tw.word)
+        } else null
+        kb.suggestions = SuggestionChipModel.EMPTY_ROW
+        predictionJob = serviceScope.launch {
+            val snap = withContext(Dispatchers.Default) {
+                val me = coroutineContext[Job]
+                WordPredictorEngine.predict(tw.word, "", null, lang, false, s.autoCorrectStrength, true, null, sys) { me?.isActive == false }
+            } ?: return@launch
+            if (tapWord != tw) return@launch
+            if (snap.known && snap.autoCorrection == null) return@launch
+            if (snap.chips.count { !it.isEmpty && it.commitWord != tw.word } == 0) return@launch
+            kb.suggestions = snap.chips
+        }
+    }
+
+    /** Заменить слово под курсором выбранным вариантом. */
+    private fun replaceTapWord(ic: InputConnection, tw: TapWord, chip: SuggestionChipModel) {
+        val word = chip.commitWord
+        if (chip.isKeepExact && word == tw.word) {
+            WordPredictorEngine.rejectCorrection(kb.language, word)
+            learn("", word, 3)
+        } else {
+            ic.beginBatchEdit()
+            ic.setComposingRegion(tw.start, tw.end)
+            ic.commitText(word, 1)
+            ic.endBatchEdit()
+            expect(tw.start + word.length)
+            learn("", word)
+        }
+        tapWord = null
+        kb.suggestions = SuggestionChipModel.EMPTY_ROW
     }
 
     private fun learn(previous: String, word: String, boost: Int = 1) {
@@ -1023,7 +1244,7 @@ class ComposeKeyboardService : InputMethodService(),
         }
         val t = token ?: return false
         val template = map[t.lowercase()] ?: return false
-        val text = PluginTemplates.expand(template, clipboard = kb.clipboard.firstOrNull().orEmpty())
+        val text = PluginTemplates.expand(template, clipboard = firstTextClip())
         ic.beginBatchEdit()
         if (composing.isNotEmpty()) {
             ic.finishComposingText()
@@ -1270,6 +1491,9 @@ class ComposeKeyboardService : InputMethodService(),
     override fun keyTick() = HapticsEngine.tick(this, inputView, settings)
 
     override fun commitKey(key: KeyModel, text: String) {
+        // любое нажатие меняет текст — слово под курсором и его границы больше не верны
+        tapWord = null
+        if (kb.clipOffer != null && key.type in OFFER_BREAKERS && panelInput == null) kb.clipOffer = null
         when (key.type) {
             KeyType.CHARACTER -> {
                 // клавиша-команда из раскладки плагина
@@ -1367,6 +1591,11 @@ class ComposeKeyboardService : InputMethodService(),
         HapticsEngine.keyPress(this, inputView, settings, false)
         val ic = currentInputConnection ?: return
         glideWord = false
+        val tw = tapWord
+        if (tw != null && composing.isEmpty() && !chip.isUndo) {
+            replaceTapWord(ic, tw, chip)
+            return
+        }
         val u = undo
         if (chip.isUndo && u != null) {
             ic.beginBatchEdit()
@@ -1454,7 +1683,17 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun openVoiceFallback() {
-        (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.showInputMethodPicker()
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
+        // клавиатура с голосовым режимом (Google voice typing, Gboard и т. п.): переключаемся прямо в него
+        val voiceIme = runCatching {
+            imm.enabledInputMethodList.filter { it.packageName != packageName }.firstNotNullOfOrNull { ime ->
+                imm.getEnabledInputMethodSubtypeList(ime, true).firstOrNull { it.mode == "voice" }?.let { ime to it }
+            }
+        }.getOrNull()
+        if (voiceIme != null && Build.VERSION.SDK_INT >= 28) {
+            runCatching { switchInputMethod(voiceIme.first.id, voiceIme.second) }.onSuccess { return }
+        }
+        imm.showInputMethodPicker()
     }
 
     override fun hideKeyboard() {
@@ -1462,13 +1701,72 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun clearClipboard() {
-        kb.clipboard.retainAll(kb.pinnedClips.toSet())
+        val keep = kb.pinnedClips.toSet()
+        kb.clipboard.filter { it !in keep }.forEach { ClipImages.delete(it) }
+        kb.clipboard.retainAll(keep)
+        if (kb.clipOffer?.let { it !in keep } == true) kb.clipOffer = null
     }
 
     override fun removeClip(text: String) {
         HapticsEngine.tick(this, inputView, settings)
         kb.clipboard.remove(text)
         if (kb.pinnedClips.remove(text)) savePinned()
+        if (kb.clipOffer == text) kb.clipOffer = null
+        ClipImages.delete(text)
+    }
+
+    override fun commitClip(entry: String) {
+        if (!ClipImages.isImage(entry)) {
+            commitText(entry)
+            return
+        }
+        HapticsEngine.keyPress(this, inputView, settings, false)
+        val info = currentInputEditorInfo ?: return
+        val ic = currentInputConnection ?: return
+        val mime = ClipImages.mime(entry)
+        val accepts = EditorInfoCompat.getContentMimeTypes(info).any { ClipDescription.compareMimeTypes(mime, it) }
+        if (!accepts) {
+            Toast.makeText(this, tr("Это поле не принимает картинки"), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val ok = runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", ClipImages.file(entry))
+            val content = InputContentInfoCompat(uri, ClipDescription("image", arrayOf(mime)), null)
+            InputConnectionCompat.commitContent(ic, info, content, InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION, null)
+        }.getOrDefault(false)
+        if (!ok) Toast.makeText(this, tr("Не удалось вставить картинку"), Toast.LENGTH_SHORT).show()
+    }
+
+    override fun pasteClipOffer() {
+        val entry = kb.clipOffer ?: return
+        kb.clipOffer = null
+        commitClip(entry)
+    }
+
+    override fun dismissClipOffer() {
+        HapticsEngine.tick(this, inputView, settings)
+        kb.clipOffer = null
+    }
+
+    /** Первая текстовая запись буфера — для шаблонов {clipboard}. */
+    private fun firstTextClip(): String = kb.clipboard.firstOrNull { !ClipImages.isImage(it) }.orEmpty()
+
+    private fun addClip(entry: String, stamp: Long) {
+        val s = settings
+        if (kb.clipboard.firstOrNull() != entry) {
+            kb.clipboard.remove(entry)
+            kb.clipboard.add(0, entry)
+            while (kb.clipboard.size > s.clipboardSize) {
+                val gone = kb.clipboard.removeAt(kb.clipboard.lastIndex)
+                if (gone !in kb.pinnedClips && gone != kb.clipOffer) ClipImages.delete(gone)
+            }
+        }
+        // скопировали только что — предложить вставить (как в Gboard)
+        val now = System.currentTimeMillis()
+        if (stamp > 0 && now - stamp in 0..CLIP_OFFER_MS && !flags.isPassword) {
+            kb.clipOffer = entry
+            clipOfferAt = stamp
+        }
     }
 
     override fun togglePinClip(text: String) {
@@ -1515,18 +1813,30 @@ class ComposeKeyboardService : InputMethodService(),
         runCatching {
             val clip = clipboardManager?.primaryClip ?: return
             if (clip.itemCount == 0) return
+            val desc = clip.description
             // пароли, помеченные системой как чувствительные, в историю не попадают
-            if (Build.VERSION.SDK_INT >= 33 &&
-                clip.description?.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true
-            ) return
-            val text = clip.getItemAt(0).coerceToText(this)?.toString()?.trim()
-            if (!text.isNullOrEmpty()) {
-                if (kb.clipboard.firstOrNull() == text) return
-                kb.clipboard.remove(text)
-                kb.clipboard.add(0, text)
-                while (kb.clipboard.size > s.clipboardSize) kb.clipboard.removeAt(kb.clipboard.lastIndex)
-                ScriptHost.emit("clipboard", text)
+            if (Build.VERSION.SDK_INT >= 33 && desc?.extras?.getBoolean("android.content.extra.IS_SENSITIVE") == true) return
+            val stamp = if (Build.VERSION.SDK_INT >= 26) desc?.timestamp ?: 0L else 0L
+            // эту запись уже обработали (stamp 0 — старые Android: сравниваем по содержимому ниже)
+            if (stamp != 0L && stamp == lastClipStamp) return
+            val item = clip.getItemAt(0)
+            val uri = item.uri
+            val imageMime = desc?.let { d -> (0 until d.mimeTypeCount).map { d.getMimeType(it) }.firstOrNull { it.startsWith("image/") } }
+            if (uri != null && imageMime != null) {
+                lastClipStamp = stamp
+                serviceScope.launch {
+                    val entry = ClipImages.save(this@ComposeKeyboardService, uri, imageMime, if (stamp > 0) stamp else System.currentTimeMillis())
+                    if (entry != null) addClip(entry, stamp)
+                }
+                return
             }
+            val text = item.coerceToText(this)?.toString()?.trim()
+            // пока клавиатура скрыта, система может отдать пустую запись — перечитаем, когда она появится
+            if (text.isNullOrEmpty()) return
+            lastClipStamp = stamp
+            if (stamp == 0L && kb.clipboard.firstOrNull() == text) return
+            addClip(text, stamp)
+            ScriptHost.emit("clipboard", text)
         }
     }
 
@@ -1705,7 +2015,7 @@ class ComposeKeyboardService : InputMethodService(),
         val a = plugin.actions.getOrNull(index) ?: return
         HapticsEngine.keyPress(this, inputView, settings, false)
         val ic = currentInputConnection ?: return
-        val clip = kb.clipboard.firstOrNull().orEmpty()
+        val clip = firstTextClip()
         runCatching {
             when (a.type) {
                 PluginActionType.INSERT -> {
@@ -1861,7 +2171,7 @@ class ComposeKeyboardService : InputMethodService(),
         }
     }
 
-    override fun scriptClipboard(): List<String> = (kb.pinnedClips + kb.clipboard).distinct()
+    override fun scriptClipboard(): List<String> = (kb.pinnedClips + kb.clipboard).distinct().filter { !ClipImages.isImage(it) }
 
     override fun scriptCopy(text: String) {
         runCatching { clipboardManager?.setPrimaryClip(android.content.ClipData.newPlainText("plugin", text)) }
