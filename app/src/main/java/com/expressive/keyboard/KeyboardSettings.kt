@@ -312,7 +312,7 @@ object KeyboardPrefs {
         val font = p.getString("font_style", "ROUNDED")
         return KeyboardSettings(
             themeMode = p.getString("theme_mode", "SYSTEM") ?: "SYSTEM",
-            keyHeightDp = p.getFloat("key_height_dp", 54f).coerceIn(44f, 68f),
+            keyHeightDp = p.getFloat("key_height_dp", 54f).coerceIn(24f, 68f),
             cornerRadiusDp = p.getFloat("corner_radius_dp", 16f).coerceIn(6f, 30f),
             keySpacingDp = p.getFloat("key_spacing_dp", 5f).coerceIn(2f, 8f),
             rowSpacingDp = p.getFloat("row_spacing_dp", 8f).coerceIn(4f, 12f),
