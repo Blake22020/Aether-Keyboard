@@ -792,7 +792,7 @@ internal fun KeyView(
                 fontSize = when {
                     key.type == KeyType.MODE_SYMBOLS || key.type == KeyType.SYMBOLS_PAGE -> (15f * scale).sp
                     numberRow -> (17f * settings.keyLabelScale * scale).sp
-                    else -> ((settings.keyHeightDp * 0.4f).coerceIn(18f, 25f) * settings.keyLabelScale * scale).sp
+                    else -> ((settings.keyHeightDp * 0.4f).coerceIn(12f, 25f) * settings.keyLabelScale * scale).sp
                 },
                 maxLines = 1,
                 softWrap = false,
@@ -1053,6 +1053,7 @@ private fun AetherFitText(
         fontWeight = fontWeight,
         maxLines = maxLines,
         softWrap = false,
+        overflow = TextOverflow.Ellipsis,
         onTextLayout = { layout ->
             if (layout.hasVisualOverflow && fittedSize > 7f) {
                 fittedSize = (fittedSize - 0.75f).coerceAtLeast(7f)
