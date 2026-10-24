@@ -29,9 +29,19 @@ class ShareImageActivity : Activity() {
         if (source != null) {
             runCatching {
                 val dir = File(filesDir, "shared_images").apply { mkdirs() }
-                val dest = File(dir, "latest_image")
+                val dest = File(dir, "image_${System.currentTimeMillis()}")
                 contentResolver.openInputStream(source)?.use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
+                    dest.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            if (total > 20L * 1024L * 1024L) error("Shared image exceeds 20 MB")
+                            output.write(buffer, 0, count)
+                        }
+                    }
                 } ?: error("Cannot open shared image")
                 val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", dest)
                 val clip = ClipData.newUri(contentResolver, "Shared image", uri)
