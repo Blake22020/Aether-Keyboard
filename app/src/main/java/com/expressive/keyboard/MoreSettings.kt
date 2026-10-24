@@ -156,16 +156,19 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
         val code = lang.dict ?: return
         scope.launch {
             Dictionaries.download(context, code)
-                .onSuccess { Toast.makeText(context, "Словарь «${lang.title}»: $it слов", Toast.LENGTH_SHORT).show() }
-                .onFailure { Toast.makeText(context, "Не удалось скачать словарь: ${it.message}", Toast.LENGTH_LONG).show() }
+                .onSuccess { Toast.makeText(context, tr("Словарь «{0}»: {1} слов", lang.displayTitle(), it), Toast.LENGTH_SHORT).show() }
+                .onFailure { Toast.makeText(context, tr("Не удалось скачать словарь: {0}", it.message), Toast.LENGTH_LONG).show() }
         }
     }
 
     InfoCard(
         Icons.Rounded.Language,
-        "Язык меняется кнопкой 🌐 (удержание — список языков) или свайпом по пробелу. " +
-            "Подсказки и автоисправление работают по частотному словарю языка: русский и английский встроены, " +
-            "остальные скачиваются (~0,3–0,8 МБ). Корейский собирает слоги сам, вьетнамский набирается по Telex (aa → â, s → тон)."
+        tr(
+            "Язык меняется кнопкой 🌐 (удержание — список языков) или свайпом по пробелу. Всего языков: {0}. " +
+                "Подсказки работают по частотному словарю: русский, английский и китайский встроены, остальные скачиваются " +
+                "(~0,3–0,8 МБ). Китайский набирается пиньинем (nihao → 你好), японский — ромадзи (konnichiha → こんにちは), " +
+                "корейский собирает слоги сам, вьетнамский — по Telex.", Languages.all.size
+        )
     )
     SettingsSection("Включённые языки") {
         enabled.forEachIndexed { i, lang ->
@@ -196,14 +199,14 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                 shape = RoundedCornerShape(24.dp),
-                placeholder = { Text("Поиск: немецкий, Deutsch, de…") },
+                placeholder = { Text(tr("Поиск: немецкий, Deutsch, de…")) },
                 leadingIcon = { Icon(Icons.Rounded.Search, null) },
                 singleLine = true
             )
         }
         val q = query.trim().lowercase()
         Languages.all.filter { it !in enabled }
-            .filter { q.isEmpty() || it.title.lowercase().contains(q) || it.spaceLabel.lowercase().contains(q) || it.id.startsWith(q) }
+            .filter { q.isEmpty() || it.title.lowercase().contains(q) || it.displayTitle().lowercase().contains(q) || it.spaceLabel.lowercase().contains(q) || it.id.startsWith(q) }
             .forEach { lang ->
                 key(dictVersion, lang.id) {
                     LanguageRow(lang, dictState(context, lang, status, enabled = false), trailing = {
@@ -223,20 +226,23 @@ internal fun LanguagesPage(settings: KeyboardSettings) {
 }
 
 private fun dictState(context: Context, lang: KeyboardLanguage, status: Map<String, String>, enabled: Boolean = true): String {
-    val code = lang.dict ?: return "Без словаря — подсказки из ваших слов"
-    status[code]?.let { return if (it == "загрузка…") "Словарь загружается…" else "Ошибка: $it" }
+    if (lang.composer == Composer.PINYIN) return tr("Встроенный словарь пиньиня — 40 000 слов")
+    if (lang.composer == Composer.KANA) return tr("Хирагана и катакана из латиницы")
+    val code = lang.dict ?: return tr("Без словаря — подсказки из ваших слов")
+    status[code]?.let { return if (it == "загрузка…") tr("Словарь загружается…") else tr("Ошибка: {0}", it) }
     return when {
-        Dictionaries.bundled(context, code) -> "Словарь встроен"
-        Dictionaries.isInstalled(context, code) -> "Словарь скачан"
-        enabled -> "Словарь не скачан — нажмите, чтобы скачать"
-        else -> "Есть словарь подсказок"
+        Dictionaries.bundled(context, code) -> tr("Словарь встроен")
+        Dictionaries.isInstalled(context, code) -> tr("Словарь скачан")
+        enabled -> tr("Словарь не скачан — нажмите, чтобы скачать")
+        else -> tr("Есть словарь подсказок")
     }
 }
 
 @Composable
 private fun LanguageRow(lang: KeyboardLanguage, state: String, trailing: @Composable RowScope.() -> Unit, onDict: (() -> Unit)?) {
     val cs = MaterialTheme.colorScheme
-    val canDownload = onDict != null && state.endsWith("скачать") || (onDict != null && state.startsWith("Ошибка"))
+    val error = state.startsWith(tr("Ошибка: {0}", ""))
+    val canDownload = onDict != null && (state == tr("Словарь не скачан — нажмите, чтобы скачать") || error)
     GroupItem(onClick = if (canDownload) onDict else null) {
         Row(
             Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
@@ -247,10 +253,11 @@ private fun LanguageRow(lang: KeyboardLanguage, state: String, trailing: @Compos
                 Text(lang.label, color = cs.onSecondaryContainer, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
             }
             Column(Modifier.weight(1f)) {
-                Text(if (lang.title == lang.spaceLabel) lang.title else "${lang.title} · ${lang.spaceLabel}", style = MaterialTheme.typography.titleMedium, color = cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val title = lang.displayTitle()
+                Text(if (title == lang.spaceLabel) title else "$title · ${lang.spaceLabel}", style = MaterialTheme.typography.titleMedium, color = cs.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     state, style = MaterialTheme.typography.bodySmall,
-                    color = if (state.startsWith("Ошибка")) cs.error else if (canDownload) cs.primary else cs.onSurfaceVariant
+                    color = if (error) cs.error else if (canDownload) cs.primary else cs.onSurfaceVariant
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically, content = trailing)
@@ -292,7 +299,7 @@ internal fun DefaultSlotIcon(slot: String, tint: Color, size: Dp) {
         slot == "layout_swap" -> LayoutSwapIcon(tint, size)
         slot == "emoji_recent" -> Text("🕒", fontSize = 20.sp)
         slot.startsWith("emoji_cat_") -> Text(
-            listOf("😀", "👋", "🦊", "🍕", "⚽", "🚀", "💎").getOrElse(slot.removePrefix("emoji_cat_").toIntOrNull() ?: 0) { "😀" },
+            EmojiCategory.ICONS.values.toList().getOrElse(slot.removePrefix("emoji_cat_").toIntOrNull() ?: 0) { "😀" },
             fontSize = 20.sp
         )
     }
@@ -311,7 +318,7 @@ internal fun IconsPage(settings: KeyboardSettings) {
         val slot = target
         if (uri != null && slot != null) scope.launch {
             val ok = withContext(Dispatchers.IO) { IconStore.setImage(context, slot.id, uri) }
-            if (!ok) Toast.makeText(context, "Не удалось открыть картинку", Toast.LENGTH_LONG).show()
+            if (!ok) Toast.makeText(context, tr("Не удалось открыть картинку"), Toast.LENGTH_LONG).show()
         }
         target = null
     }
@@ -327,10 +334,19 @@ internal fun IconsPage(settings: KeyboardSettings) {
                 }.isSuccess
             }
             if (ok) KeyboardPrefs.setEmojiFont(context)
-            else Toast.makeText(context, "Нужен файл шрифта .ttf с цветными эмодзи", Toast.LENGTH_LONG).show()
+            else Toast.makeText(context, tr("Нужен файл шрифта .ttf с цветными эмодзи"), Toast.LENGTH_LONG).show()
         }
     }
 
+    SettingsSection("Стиль эмодзи") {
+        GroupItem { EmojiStylePicker(settings) { emojiFontLauncher.launch("*/*") } }
+        if (settings.emojiFontVersion != 0L) {
+            ActionItem(
+                Icons.Rounded.DeleteOutline, "Удалить свой шрифт эмодзи", null,
+                onClick = { KeyboardPrefs.resetEmojiFont(context) }
+            )
+        }
+    }
     InfoCard(
         Icons.Rounded.Brush,
         "Нажмите на иконку, чтобы заменить её своей картинкой (PNG с прозрачностью смотрится лучше всего) " +
@@ -350,12 +366,12 @@ internal fun IconsPage(settings: KeyboardSettings) {
                             SlotIcon(slot.id, cs.onPrimaryContainer, 24.dp) { DefaultSlotIcon(slot.id, cs.onPrimaryContainer, 24.dp) }
                         }
                         Column(Modifier.weight(1f)) {
-                            Text(slot.title, style = MaterialTheme.typography.titleMedium, color = cs.onSurface)
+                            Text(tr(slot.title), style = MaterialTheme.typography.titleMedium, color = cs.onSurface)
                             Text(
                                 when (custom) {
-                                    null -> if (IconStore.get(slot.id) != null) "Из плагина" else "Стандартная"
-                                    is CustomIcon.Picture -> if (custom.tint) "Своя картинка · в цвет темы" else "Своя картинка"
-                                    is CustomIcon.Label -> "Свой текст: ${custom.text}"
+                                    null -> tr(if (IconStore.get(slot.id) != null) "Из плагина" else "Стандартная")
+                                    is CustomIcon.Picture -> tr(if (custom.tint) "Своя картинка · в цвет темы" else "Своя картинка")
+                                    is CustomIcon.Label -> tr("Свой текст: {0}", custom.text)
                                 },
                                 style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant
                             )
@@ -368,17 +384,6 @@ internal fun IconsPage(settings: KeyboardSettings) {
             }
         }
     }
-    SettingsSection("Стиль эмодзи") {
-        ActionItem(
-            Icons.Rounded.EmojiEmotions,
-            if (settings.emojiFontVersion != 0L) "Сменить шрифт эмодзи" else "Свой шрифт эмодзи",
-            "Цветной .ttf (например, в стиле iOS или Twemoji) — эмодзи на клавиатуре будут выглядеть по-новому",
-            onClick = { emojiFontLauncher.launch("*/*") },
-            trailing = if (settings.emojiFontVersion != 0L) {
-                { IconButton(onClick = { KeyboardPrefs.resetEmojiFont(context) }) { Icon(Icons.Rounded.DeleteOutline, "Убрать", tint = cs.error) } }
-            } else null
-        )
-    }
     SettingsSection(null) {
         ActionItem(Icons.Rounded.RestartAlt, "Вернуть все иконки", null, onClick = { confirmReset = true })
     }
@@ -388,29 +393,29 @@ internal fun IconsPage(settings: KeyboardSettings) {
         AlertDialog(
             onDismissRequest = { menuFor = null },
             icon = { SlotIcon(slot.id, cs.primary, 32.dp) { DefaultSlotIcon(slot.id, cs.primary, 32.dp) } },
-            title = { Text(slot.title) },
+            title = { Text(tr(slot.title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(onClick = { target = slot; menuFor = null; imageLauncher.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Image, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Картинка из галереи")
+                        Icon(Icons.Rounded.Image, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(tr("Картинка из галереи"))
                     }
                     FilledTonalButton(onClick = { textFor = slot; menuFor = null }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.EmojiEmotions, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Эмодзи или текст")
+                        Icon(Icons.Rounded.EmojiEmotions, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(tr("Эмодзи или текст"))
                     }
                     if (custom is CustomIcon.Picture) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Перекрашивать в цвет темы", Modifier.weight(1f))
+                            Text(tr("Перекрашивать в цвет темы"), Modifier.weight(1f))
                             Switch(checked = custom.tint, onCheckedChange = { IconStore.setTint(context, slot.id, it) })
                         }
                     }
                     if (custom != null) {
                         OutlinedButton(onClick = { IconStore.reset(context, slot.id); menuFor = null }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Вернуть стандартную")
+                            Text(tr("Вернуть стандартную"))
                         }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { menuFor = null }) { Text("Готово") } }
+            confirmButton = { TextButton(onClick = { menuFor = null }) { Text(tr("Готово")) } }
         )
     }
     textFor?.let { slot ->
@@ -422,10 +427,10 @@ internal fun IconsPage(settings: KeyboardSettings) {
     if (confirmReset) {
         AlertDialog(
             onDismissRequest = { confirmReset = false },
-            title = { Text("Вернуть все иконки?") },
-            text = { Text("Свои картинки и тексты будут удалены.") },
-            confirmButton = { Button(onClick = { IconStore.resetAll(context); confirmReset = false }) { Text("Вернуть") } },
-            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Отмена") } }
+            title = { Text(tr("Вернуть все иконки?")) },
+            text = { Text(tr("Свои картинки и тексты будут удалены.")) },
+            confirmButton = { Button(onClick = { IconStore.resetAll(context); confirmReset = false }) { Text(tr("Вернуть")) } },
+            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text(tr("Отмена")) } }
         )
     }
 }
@@ -467,7 +472,7 @@ internal fun ToolbarPage(settings: KeyboardSettings) {
                         }
                     }
                     Text(
-                        def.title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
+                        tr(def.title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
                         color = if (visible) cs.onSurface else cs.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
                     )
                     IconButton(onClick = { saveOrder(order.toMutableList().also { java.util.Collections.swap(it, i, i - 1) }) }, enabled = i > 0) {
@@ -488,5 +493,41 @@ internal fun ToolbarPage(settings: KeyboardSettings) {
         ActionItem(Icons.Rounded.RestartAlt, "Порядок по умолчанию", "Все кнопки снова видны", onClick = {
             KeyboardPrefs.edit(context) { remove("toolbar_order"); remove("toolbar_hidden") }
         })
+    }
+}
+
+/** Стили эмодзи: системный, встроенные наборы картинок и свой шрифт. В каждой карточке — пример. */
+@Composable
+internal fun EmojiStylePicker(settings: KeyboardSettings, onCustom: () -> Unit) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val font = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
+    val options = listOf(EmojiStyles.SYSTEM to tr("Как в системе")) + EmojiStyles.builtIn.map { it.first to it.second } +
+        (EmojiStyles.CUSTOM to tr("Свой шрифт…"))
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        options.forEach { (id, title) ->
+            val sel = settings.emojiStyle == id
+            Column(
+                Modifier.width(132.dp).clip(RoundedCornerShape(if (sel) 26.dp else 16.dp))
+                    .background(if (sel) cs.primaryContainer else cs.surfaceContainerHigh)
+                    .clickable {
+                        if (id == EmojiStyles.CUSTOM && settings.emojiFontVersion == 0L) onCustom()
+                        else KeyboardPrefs.edit(context) { putString("emoji_style", id) }
+                    }
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    listOf("😀", "😍", "🐱", "🍕").forEach { EmojiGlyph(it, 26.dp, id, font) }
+                }
+                Text(
+                    title, style = MaterialTheme.typography.labelLarge, color = if (sel) cs.onPrimaryContainer else cs.onSurface,
+                    maxLines = 2, minLines = 2
+                )
+            }
+        }
     }
 }

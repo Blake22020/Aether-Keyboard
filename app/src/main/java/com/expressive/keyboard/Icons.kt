@@ -68,7 +68,7 @@ object IconStore {
     private const val PREFS = "expressive_keyboard_icons"
     private const val DIR = "icons"
 
-    val EMOJI_CATEGORIES = listOf("Смайлы", "Люди", "Природа", "Еда", "Спорт", "Транспорт", "Символы")
+    val EMOJI_CATEGORIES = listOf("Смайлы и эмоции", "Люди", "Животные и природа", "Еда и напитки", "Путешествия и места", "Занятия", "Предметы", "Символы", "Флаги")
 
     val slots: List<IconSlot> = buildList {
         val top = "Верхняя панель"

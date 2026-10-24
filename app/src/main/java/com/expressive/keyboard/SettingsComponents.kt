@@ -173,13 +173,13 @@ internal fun HeroCard(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    if (ready) "Всё готово" else "Почти готово",
+                    tr(if (ready) "Всё готово" else "Почти готово"),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold,
                     color = if (ready) cs.onPrimaryContainer else cs.onTertiaryContainer
                 )
                 Text(
-                    if (ready) "Клавиатура включена и выбрана" else "Включите клавиатуру и выберите её по умолчанию",
+                    tr(if (ready) "Клавиатура включена и выбрана" else "Включите клавиатуру и выберите её по умолчанию"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = (if (ready) cs.onPrimaryContainer else cs.onTertiaryContainer).copy(alpha = 0.8f)
                 )
@@ -215,10 +215,10 @@ internal fun StepRow(n: Int, title: String, done: Boolean, action: String, onCli
             if (done) Icon(Icons.Rounded.Check, null, tint = cs.onPrimary, modifier = Modifier.size(18.dp))
             else Text("$n", color = cs.onSecondaryContainer, fontWeight = FontWeight.ExtraBold)
         }
-        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = cs.onSurface)
+        Text(tr(title), Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = cs.onSurface)
         if (!done) {
             Button(onClick = onClick, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
-                Text(action, fontWeight = FontWeight.Bold)
+                Text(tr(action), fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -230,7 +230,7 @@ internal fun SettingsSection(title: String?, content: @Composable ColumnScope.()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (title != null) {
             Text(
-                title,
+                tr(title),
                 modifier = Modifier.padding(start = 16.dp),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.ExtraBold,
@@ -272,9 +272,9 @@ internal fun ItemTitle(icon: ImageVector, title: String, subtitle: String?) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         IconBadge(icon)
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+            Text(tr(title), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr(subtitle), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -339,7 +339,7 @@ internal fun SliderItem(
         Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 IconBadge(icon)
-                Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                Text(tr(title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                 Box(
                     Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer).padding(horizontal = 12.dp, vertical = 4.dp)
                 ) {
@@ -391,7 +391,7 @@ internal fun ButtonGroup(options: List<Pair<String, String>>, selected: String, 
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    label,
+                    tr(label),
                     color = if (isSel) cs.onPrimary else cs.onSecondaryContainer,
                     style = MaterialTheme.typography.labelLarge,
                     maxLines = 1,
@@ -444,7 +444,7 @@ internal fun ShapePicker(settings: KeyboardSettings) {
                     if (isSel) Icon(Icons.Rounded.Check, null, tint = cs.onPrimary)
                 }
                 Text(
-                    preset.title, style = MaterialTheme.typography.labelMedium,
+                    tr(preset.title), style = MaterialTheme.typography.labelMedium,
                     color = if (isSel) cs.primary else cs.onSurfaceVariant, maxLines = 1
                 )
             }
@@ -499,7 +499,7 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
                 }
             }
             Row(Modifier.fillMaxWidth().height(keyH), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                listOf("п", "р", "и", "в", "е", "т").forEachIndexed { i, ch ->
+                (if (I18n.isEnglish) listOf("h", "e", "l", "l", "o", "!") else listOf("п", "р", "и", "в", "е", "т")).forEachIndexed { i, ch ->
                     val pressed = i == 2
                     Box(
                         Modifier.weight(1f).fillMaxHeight()
@@ -533,7 +533,7 @@ internal fun StylePreview(settings: KeyboardSettings, spec: WavySpec) {
                     }
                 }
                 Box(Modifier.weight(3f).fillMaxHeight().clip(CircleShape).background(palette.func), contentAlignment = Alignment.Center) {
-                    Text("Русский", color = palette.onFunc.copy(alpha = 0.72f), fontFamily = font, fontWeight = weight, fontSize = 13.sp)
+                    Text(if (I18n.isEnglish) "English" else "Русский", color = palette.onFunc.copy(alpha = 0.72f), fontFamily = font, fontWeight = weight, fontSize = 13.sp)
                 }
                 Box(Modifier.weight(1.3f).fillMaxHeight().clip(CircleShape).background(palette.func), contentAlignment = Alignment.Center) {
                     GlyphIcon(Glyph.BACKSPACE, palette.onFunc, 20.dp)
@@ -555,7 +555,11 @@ internal fun CategoryTile(page: SettingsPage, index: Int, onClick: () -> Unit) {
         1 -> cs.secondaryContainer to cs.onSecondaryContainer
         else -> cs.tertiaryContainer to cs.onTertiaryContainer
     }
-    val spec = remember(page) { WavySpec(page.shape.profile, page.shape.defaultWaves, page.shape.defaultAmplitude / 100f) }
+    val expressive = KeyboardPrefs.observe().value.designStyle == DesignStyle.EXPRESSIVE.id
+    val spec = remember(page, expressive) {
+        if (expressive) WavySpec(page.shape.profile, page.shape.defaultWaves, page.shape.defaultAmplitude / 100f)
+        else WavySpec(ShapeProfile.CIRCLE, 12, 0f)
+    }
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val rot by animateFloatAsState(if (pressed) 40f else 0f, spring(dampingRatio = 0.5f, stiffness = 300f), label = "tileRot")
@@ -571,8 +575,8 @@ internal fun CategoryTile(page: SettingsPage, index: Int, onClick: () -> Unit) {
             Icon(page.icon, null, tint = fg, modifier = Modifier.size(24.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(page.title, style = MaterialTheme.typography.titleMedium, color = cs.onSurface)
-            Text(page.subtitle, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(tr(page.title), style = MaterialTheme.typography.titleMedium, color = cs.onSurface)
+            Text(tr(page.subtitle), style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         Icon(Icons.Rounded.ChevronRight, null, tint = cs.onSurfaceVariant)
     }
@@ -661,13 +665,13 @@ internal fun ColorPickerDialog(
     val cs = MaterialTheme.colorScheme
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = { Text(tr(title)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     val spec = remember { WavySpec(ShapeProfile.SINE, 12, 0.06f) }
                     Box(Modifier.size(72.dp).wavyBackground(spec, color), contentAlignment = Alignment.Center) {
-                        Text("Аа", color = contentColorFor(color), fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+                        Text(tr("Аа"), color = contentColorFor(color), fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
                     }
                     OutlinedTextField(
                         value = hex,
@@ -688,17 +692,17 @@ internal fun ColorPickerDialog(
                         modifier = Modifier.weight(1f)
                     )
                 }
-                Text("Оттенок", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+                Text(tr("Оттенок"), style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
                 GradientBar(h / 360f, remember { Brush.horizontalGradient((0..6).map { hsvColor(it * 60f, 1f, 1f) }) }, hsvColor(h, 1f, 1f)) {
                     h = it * 360f
                     syncHex()
                 }
-                Text("Насыщенность", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+                Text(tr("Насыщенность"), style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
                 GradientBar(s, Brush.horizontalGradient(listOf(hsvColor(h, 0f, v), hsvColor(h, 1f, v))), color) {
                     s = it
                     syncHex()
                 }
-                Text("Яркость", style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
+                Text(tr("Яркость"), style = MaterialTheme.typography.labelLarge, color = cs.onSurfaceVariant)
                 GradientBar(v, Brush.horizontalGradient(listOf(Color.Black, hsvColor(h, s, 1f))), color) {
                     v = it
                     syncHex()
@@ -712,11 +716,11 @@ internal fun ColorPickerDialog(
                 }
             }
         },
-        confirmButton = { Button(onClick = { onPick(color.toArgb()) }) { Text("Готово") } },
+        confirmButton = { Button(onClick = { onPick(color.toArgb()) }) { Text(tr("Готово")) } },
         dismissButton = {
             Row {
-                if (allowAuto) TextButton(onClick = { onPick(0) }) { Text("Авто") }
-                TextButton(onClick = onDismiss) { Text("Отмена") }
+                if (allowAuto) TextButton(onClick = { onPick(0) }) { Text(tr("Авто")) }
+                TextButton(onClick = onDismiss) { Text(tr("Отмена")) }
             }
         }
     )
@@ -738,9 +742,9 @@ internal fun ColorRow(title: String, value: Int, auto: Color, onClick: () -> Uni
                     .border(1.dp, cs.outlineVariant, RoundedCornerShape(14.dp))
             )
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = cs.onSurface)
+                Text(tr(title), style = MaterialTheme.typography.titleMedium, color = cs.onSurface)
                 Text(
-                    if (value == 0) "Авто (из темы)" else "#" + String.format("%06X", value and 0xFFFFFF),
+                    if (value == 0) tr("Авто (из темы)") else "#" + String.format("%06X", value and 0xFFFFFF),
                     style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant
                 )
             }
@@ -754,15 +758,15 @@ internal fun TextInputDialog(title: String, initial: String, hint: String, onDis
     var text by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = { Text(tr(title)) },
         text = {
             OutlinedTextField(
                 value = text, onValueChange = { text = it }, singleLine = true,
-                placeholder = { Text(hint) }, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                placeholder = { Text(tr(hint)) }, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
             )
         },
-        confirmButton = { Button(onClick = { onDone(text.trim()) }) { Text("Сохранить") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
+        confirmButton = { Button(onClick = { onDone(text.trim()) }) { Text(tr("Сохранить")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Отмена")) } }
     )
 }
 
@@ -775,6 +779,6 @@ internal fun InfoCard(icon: ImageVector, text: String) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = cs.onSecondaryContainer)
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = cs.onSecondaryContainer)
+        Text(tr(text), style = MaterialTheme.typography.bodyMedium, color = cs.onSecondaryContainer)
     }
 }

@@ -19,12 +19,16 @@ Requires Android 8.0 or newer.
 ## Features
 
 - **Typing:** word suggestions, autocorrect, glide (swipe) typing
+- **Languages:** 90+ layouts; Chinese (Pinyin, simplified and traditional) and Japanese (Romaji → Kana) input; Indic scripts (InScript)
+- **Emoji:** all Unicode 16 emoji, search in English and Russian, skin tones, built-in styles (Twemoji, Noto, Blob, OpenMoji)
+- **Designs:** Material You Expressive, Material 3 (Google guidelines), Liquid Glass, Classic, Neon, Neumorphism — one tap
+- **App language:** Russian or English
 - **Panels:** emoji, GIFs, clipboard, translator, voice input
 - **Look:** Material You colors, themes and skins, custom fonts (.ttf/.otf), a photo from your gallery behind the keys
 - **Layout:** key height and corner radius, spacing, keyboard width, one-handed mode
 - **Feedback:** adjustable vibration and sound
 - **Privacy:** incognito mode; suggestions and dictionary learning are turned off in password fields
-- **Plugins and mods:** custom buttons, shortcuts, layouts, themes and JavaScript scripts
+- **Plugins and mods:** custom buttons, shortcuts, layouts, themes and JavaScript scripts that can draw and animate over the keyboard, press keys and change layouts on the fly
 
 ## Installation
 

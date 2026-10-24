@@ -227,18 +227,40 @@ data class KeyboardSettings(
     val autoCorrectStrength: String = "SAFE",     // SAFE — только уверенные исправления | NORMAL
     val dictAutoDownload: Boolean = true,         // скачивать словарь языка при включении
     val punctuationKeys: Boolean = true,          // «,» и «.» по бокам пробела, как в Gboard
+    val spaceLeftKey: String = "",                // своя клавиша слева от пробела на буквах: "" — нет
+    val spaceRightKey: String = "",               // …и справа
+    val systemSpellcheck: Boolean = true,         // спрашивать системную проверку правописания (Gboard, Samsung)
     val smartPunctuation: Boolean = true,         // «слово ,» → «слово,»
     val translateTarget: String = "en",
     // --- панель инструментов ---
     val toolbarOrder: String = "",
     val toolbarHidden: String = "",
     // --- эмодзи ---
-    val emojiFontVersion: Long = 0L
+    val emojiFontVersion: Long = 0L,
+    /** SYSTEM, CUSTOM (свой шрифт) или встроенный набор: twemoji, noto, blob, openmoji. */
+    val emojiStyle: String = "SYSTEM",
+    // --- интерфейс ---
+    val appLanguage: String = "SYSTEM",           // SYSTEM | ru | en
+    val designStyle: String = "EXPRESSIVE",
+    /** Не хранится: клавиатура в альбомной ориентации — ниже клавиши и шапка. */
+    val landscape: Boolean = false
 ) {
     val toolbarOrderList: List<String> get() = toolbarOrder.split(',').filter { it.isNotBlank() }
     val toolbarHiddenSet: Set<String> get() = toolbarHidden.split(',').filter { it.isNotBlank() }.toSet()
 
     val hasBackgroundImage: Boolean get() = bgImageVersion != 0L
+
+    /** В альбомной ориентации клавиатура занимает не больше ~55% высоты экрана. */
+    fun forLandscape(screenHeightDp: Int): KeyboardSettings {
+        val rows = if (showNumberRow) 4.78f else 4f
+        val row = min(rowSpacingDp, 5f)
+        val bottom = min(bottomOffsetDp, 2f)
+        val budget = screenHeightDp * 0.55f - 40f - 16f - bottom - row * (rows - 1f)
+        return copy(
+            keyHeightDp = (budget / rows).coerceIn(30f, keyHeightDp),
+            rowSpacingDp = row, bottomOffsetDp = bottom, landscape = true
+        )
+    }
 
     fun accentSpec(): WavySpec {
         val p = ExpressiveShapePreset.fromId(shapePreset)
@@ -260,7 +282,11 @@ object KeyboardPrefs {
         if (listener != null) return
         val sp = prefs(context)
         state.value = read(sp)
-        val l = SharedPreferences.OnSharedPreferenceChangeListener { p, _ -> state.value = read(p) }
+        I18n.apply(state.value.appLanguage)
+        val l = SharedPreferences.OnSharedPreferenceChangeListener { p, _ ->
+            state.value = read(p)
+            I18n.apply(state.value.appLanguage)
+        }
         listener = l
         sp.registerOnSharedPreferenceChangeListener(l)
     }
@@ -355,21 +381,33 @@ object KeyboardPrefs {
             autoCorrectStrength = p.getString("auto_correct_strength", "SAFE") ?: "SAFE",
             dictAutoDownload = p.getBoolean("dict_auto_download", true),
             punctuationKeys = p.getBoolean("punctuation_keys", true),
+            spaceLeftKey = p.getString("space_left_key", "") ?: "",
+            spaceRightKey = p.getString("space_right_key", "") ?: "",
+            systemSpellcheck = p.getBoolean("system_spellcheck", true),
             smartPunctuation = p.getBoolean("smart_punctuation", true),
             translateTarget = p.getString("translate_target", "en") ?: "en",
             toolbarOrder = p.getString("toolbar_order", "") ?: "",
             toolbarHidden = p.getString("toolbar_hidden", "") ?: "",
-            emojiFontVersion = p.getLong("emoji_font_version", 0L)
+            emojiFontVersion = p.getLong("emoji_font_version", 0L),
+            emojiStyle = p.getString("emoji_style", null) ?: if (p.getLong("emoji_font_version", 0L) != 0L) "CUSTOM" else "SYSTEM",
+            appLanguage = p.getString("app_language", "SYSTEM") ?: "SYSTEM",
+            designStyle = p.getString("design_style", "EXPRESSIVE") ?: "EXPRESSIVE"
         )
     }
 
     const val EMOJI_FONT_FILENAME = "emoji_font.ttf"
 
-    fun setEmojiFont(context: Context) = edit(context) { putLong("emoji_font_version", System.currentTimeMillis()) }
+    fun setEmojiFont(context: Context) = edit(context) {
+        putLong("emoji_font_version", System.currentTimeMillis())
+        putString("emoji_style", "CUSTOM")
+    }
 
     fun resetEmojiFont(context: Context) {
         File(context.filesDir, EMOJI_FONT_FILENAME).delete()
-        edit(context) { putLong("emoji_font_version", 0L) }
+        edit(context) {
+            putLong("emoji_font_version", 0L)
+            putString("emoji_style", "SYSTEM")
+        }
     }
 
     /** Типы ключей настроек — плагин может менять любой из них блоком "settings". */
@@ -388,11 +426,13 @@ object KeyboardPrefs {
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
             "show_hints", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
             "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
-            "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation"
+            "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
+            "system_spellcheck"
         ).forEach { put(it, 'b') }
         listOf(
             "theme_mode", "accent_shape_preset", "haptic_mode", "font_style", "color_source", "one_handed", "space_swipe",
-            "languages", "auto_correct_strength", "translate_target", "toolbar_order", "toolbar_hidden"
+            "languages", "auto_correct_strength", "translate_target", "toolbar_order", "toolbar_hidden",
+            "space_left_key", "space_right_key", "emoji_style", "app_language", "design_style"
         ).forEach { put(it, 's') }
     }
 
@@ -479,6 +519,8 @@ object KeyboardPrefs {
                 n++
             }
             if (values.optJSONObject("font_style")?.optString("v") == "CUSTOM") putString("font_style", "ROUNDED")
+            // файлы шрифта эмодзи и фона из копии не переносятся — свой стиль эмодзи без файла не включаем
+            if (values.optJSONObject("emoji_style")?.optString("v") == "CUSTOM") putString("emoji_style", "SYSTEM")
         }
         return n
     }
@@ -506,6 +548,7 @@ object KeyboardPrefs {
 
     fun resetAll(context: Context) {
         File(context.filesDir, CUSTOM_FONT_FILENAME).delete()
+        File(context.filesDir, EMOJI_FONT_FILENAME).delete()
         File(context.filesDir, BG_IMAGE_FILENAME).delete()
         edit(context) { clear() }
     }

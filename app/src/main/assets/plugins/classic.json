@@ -1,0 +1,28 @@
+{
+  "id": "builtin.classic",
+  "name": "Классика",
+  "version": "1.0",
+  "author": "Expressive Keyboard",
+  "description": "Плоские клавиши с небольшим скруглением и мягкой тенью, без анимации формы — спокойный классический вид.",
+  "icon": "⌨️",
+  "enabledByDefault": true,
+  "skin": {
+    "keys": {
+      "*": {
+        "radius": 6,
+        "pressedRadius": 6,
+        "shadow": 1.5,
+        "shadowY": 1,
+        "shadowColor": "#40000000",
+        "press": "none",
+        "hideHint": true
+      },
+      "space": {
+        "radius": 6
+      },
+      "enter": {
+        "radius": 6
+      }
+    }
+  }
+}

@@ -59,6 +59,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -421,6 +422,21 @@ internal fun KeyView(
     val pressScale = style?.pressScale
     val weight = LocalKeyWeight.current
     val hint = if (isChar && settings.showHints && !numberRow && style?.hideHint != true) upHint else null
+
+    // клавиша видна модам: kb.keys(), kb.pressKey()
+    val handle = remember(key, label) {
+        KeyHandle(key, label, holder) {
+            scope.launch {
+                anim.snapTo(0f)
+                anim.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 1800f))
+                anim.animateTo(0f, spring(dampingRatio = 0.5f, stiffness = 600f))
+            }
+        }
+    }
+    DisposableEffect(handle) {
+        KeyboardGeometry.register(handle)
+        onDispose { KeyboardGeometry.unregister(handle) }
+    }
 
     // буквы регистрируются для печати свайпом
     if (isChar && label.length == 1 && label[0].isLetter()) {
@@ -904,13 +920,16 @@ internal fun HeaderBar(
     spec: WavySpec
 ) {
     val panel = state.panel
-    val tools = state.toolbarOpen || panel != ActivePanel.KEYBOARD || !settings.showSuggestions
+    val candidates = state.candidates
+    val showCandidates = candidates.isNotEmpty() && (panel == ActivePanel.KEYBOARD)
+    val tools = !showCandidates && (state.toolbarOpen || panel != ActivePanel.KEYBOARD || !settings.showSuggestions)
+    val button = if (settings.landscape) 38.dp else 46.dp
     Row(
-        modifier = Modifier.fillMaxWidth().height(48.dp),
+        modifier = Modifier.fillMaxWidth().height(if (settings.landscape) 40.dp else 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        CookieButton(spec, palette.accent, 46.dp, onClick = { actions.headerMenu() }) {
+        CookieButton(spec, palette.accent, button, onClick = { actions.headerMenu() }) {
             if (panel != ActivePanel.KEYBOARD) {
                 SlotIcon("back", palette.onAccent, 22.dp) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, tint = palette.onAccent, modifier = Modifier.size(22.dp)) }
             } else {
@@ -927,14 +946,22 @@ internal fun HeaderBar(
                     },
                     label = "headerSwap"
                 ) { showTools ->
-                    if (showTools) ToolbarPill(state, actions, settings, palette) else SuggestionStrip(state, actions, palette, font)
+                    when {
+                        showTools -> ToolbarPill(state, actions, settings, palette)
+                        showCandidates -> CandidateStrip(candidates, actions, palette, font)
+                        else -> SuggestionStrip(state, actions, palette, font)
+                    }
                 }
             } else {
-                if (tools) ToolbarPill(state, actions, settings, palette) else SuggestionStrip(state, actions, palette, font)
+                when {
+                    tools -> ToolbarPill(state, actions, settings, palette)
+                    showCandidates -> CandidateStrip(candidates, actions, palette, font)
+                    else -> SuggestionStrip(state, actions, palette, font)
+                }
             }
         }
         if (settings.showMicButton) {
-            CookieButton(spec, palette.accent, 46.dp, onClick = { actions.togglePanel(ActivePanel.VOICE) }) {
+            CookieButton(spec, palette.accent, button, onClick = { actions.togglePanel(ActivePanel.VOICE) }) {
                 SlotIcon("mic", palette.onAccent, 22.dp) { Icon(Icons.Outlined.Mic, null, tint = palette.onAccent, modifier = Modifier.size(22.dp)) }
             }
         }
@@ -981,6 +1008,36 @@ internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, pal
                     fontWeight = if (primary) FontWeight.ExtraBold else FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+/** Варианты китайского и японского ввода: прокручиваемая лента, первый вариант — главный (его вставит пробел). */
+@Composable
+internal fun CandidateStrip(candidates: List<String>, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(candidates) { listState.scrollToItem(0) }
+    LazyRow(
+        state = listState,
+        modifier = Modifier.fillMaxWidth().height(40.dp).clip(CircleShape).background(palette.func),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        contentPadding = PaddingValues(horizontal = 4.dp)
+    ) {
+        itemsIndexed(candidates) { i, c ->
+            val first = i == 0
+            Box(
+                Modifier.height(34.dp).clip(RoundedCornerShape(17.dp))
+                    .background(if (first) palette.accentSoft else Color.Transparent)
+                    .combinedClickable(onLongClick = { actions.forgetSuggestion(c) }) { actions.pickCandidate(i) }
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    c, color = if (first) palette.onAccentSoft else palette.onFunc, fontFamily = font,
+                    fontSize = 18.sp, fontWeight = if (first) FontWeight.ExtraBold else FontWeight.SemiBold, maxLines = 1
                 )
             }
         }
@@ -1063,7 +1120,7 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
             id == "one_handed" -> KeyboardPrefs.edit(context) { putString("one_handed", if (settings.oneHanded == "OFF") "RIGHT" else "OFF") }
             id == "incognito" -> {
                 KeyboardPrefs.edit(context) { putBoolean("incognito", !settings.incognito) }
-                Toast.makeText(context, if (settings.incognito) "Инкогнито выключено" else "Инкогнито: слова и буфер не запоминаются", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, tr(if (settings.incognito) "Инкогнито выключено" else "Инкогнито: слова и буфер не запоминаются"), Toast.LENGTH_SHORT).show()
             }
             id == "settings" -> actions.openSettings()
             id == "hide" -> actions.hideKeyboard()
@@ -1129,7 +1186,7 @@ internal fun ToolbarPill(state: KeyboardState, actions: KeyboardActions, setting
                     "translate" -> state.panel == ActivePanel.TRANSLATE
                     "gif" -> state.panel == ActivePanel.GIF
                     "clipboard" -> state.panel == ActivePanel.CLIPBOARD
-                    "emoji" -> state.panel == ActivePanel.EMOJI
+                    "emoji" -> state.panel == ActivePanel.EMOJI || state.panel == ActivePanel.EMOJI_SEARCH
                     "one_handed" -> settings.oneHanded != "OFF"
                     "incognito" -> settings.incognito
                     else -> false
@@ -1204,7 +1261,12 @@ internal fun ToolText(text: String, tint: Color, onClick: () -> Unit) {
 fun KeyboardRoot(state: KeyboardState, actions: KeyboardActions, voice: VoiceInput, onBackground: (Color, Boolean) -> Unit) {
     val raw by KeyboardPrefs.observe()
     val skin = PluginRepository.activeSkin(raw)
-    val settings = remember(raw, skin) { skin?.applyColors(raw) ?: raw }
+    val configuration = LocalConfiguration.current
+    val landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val settings = remember(raw, skin, landscape, configuration.screenHeightDp) {
+        val s = skin?.applyColors(raw) ?: raw
+        if (landscape) s.forLandscape(configuration.screenHeightDp) else s
+    }
     ExpressiveTheme(settings) {
         val palette = rememberKeyPalette(settings)
         val baseFont = LocalKeyFont.current
@@ -1279,16 +1341,25 @@ internal fun KeyboardScreen(
     val numbers = settings.showNumberRow && state.symbolsPage == 0
     val bodyHeight = (settings.keyHeightDp * (if (numbers) 4.78f else 4f) + settings.rowSpacingDp * (if (numbers) 4f else 3f)).dp
     val trailColor = LocalSkin.current?.trail ?: palette.accent.copy(alpha = 0.85f)
+    val density = LocalDensity.current
+    SideEffect {
+        KeyboardGeometry.layer = layer
+        KeyboardGeometry.density = density
+        KeyboardGeometry.actions = actions
+        KeyboardGeometry.palette = palette
+    }
+    val gap = if (settings.landscape) 4.dp else 8.dp
 
     Box(Modifier.fillMaxWidth().onGloballyPositioned { layer.coords = it }) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = settings.sidePaddingDp.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = settings.sidePaddingDp.dp, vertical = gap),
+            verticalArrangement = Arrangement.spacedBy(gap)
         ) {
             HeaderBar(state, actions, settings, palette, font, spec)
             if (panel == ActivePanel.TRANSLATE) TranslatorBar(state, actions, settings, palette, font)
+            if (panel == ActivePanel.EMOJI_SEARCH) EmojiSearchBar(state, actions, settings, palette, font)
             Box(Modifier.fillMaxWidth().height(bodyHeight)) {
-                val body = if (panel == ActivePanel.TRANSLATE) ActivePanel.KEYBOARD else panel
+                val body = if (panel == ActivePanel.TRANSLATE || panel == ActivePanel.EMOJI_SEARCH) ActivePanel.KEYBOARD else panel
                 if (settings.panelAnimations) {
                     AnimatedContent(
                         targetState = body,
@@ -1304,7 +1375,9 @@ internal fun KeyboardScreen(
             }
         }
         GlideTrailLayer(glide, trailColor, settings.glideTrail)
+        ScriptOverlayLayer()
         PopupLayer(popup, palette, font, spec)
+        ScriptFrameTicker()
     }
 }
 
@@ -1394,9 +1467,16 @@ internal fun KeyGrid(
     val shift = state.shift
     val enter = state.enterAction
     val pluginLayouts = PluginRepository.layouts
+    val scriptLayouts = ScriptHost.layoutOverrides
     val langLabels = remember(settings.languages, Languages.extra) { Languages.enabled(settings).map { it.label } }
-    val rows = remember(lang, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys, langLabels, pluginLayouts) {
-        KeyboardLayouts.rows(lang, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys, langLabels)
+    val rows = remember(
+        lang, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
+        settings.spaceLeftKey, settings.spaceRightKey, langLabels, pluginLayouts, scriptLayouts
+    ) {
+        KeyboardLayouts.rows(
+            lang, page, settings.showNumberRow, settings.showGlobeKey, settings.showEmojiKey, settings.punctuationKeys,
+            langLabels, settings.spaceLeftKey, settings.spaceRightKey
+        )
     }
     val upper = shift != ShiftState.OFF && page == 0
     val glideEnabled = settings.glideTyping && state.glideAllowed && page == 0 && lang.composer == Composer.NONE

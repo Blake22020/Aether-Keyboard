@@ -1,0 +1,27 @@
+name: Android setup
+description: JDK 17, Gradle и встроенный шрифт Nunito — общая подготовка для всех сборок
+
+runs:
+  using: composite
+  steps:
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+
+    - name: Make gradlew executable
+      shell: bash
+      run: chmod +x gradlew
+
+    - name: Download bundled rounded font (Nunito, OFL)
+      shell: bash
+      run: |
+        mkdir -p app/src/main/assets/fonts
+        curl -fsSL --retry 3 -o app/src/main/assets/fonts/rounded.ttf \
+          "https://raw.githubusercontent.com/google/fonts/main/ofl/nunito/Nunito%5Bwght%5D.ttf" \
+          || { echo "::warning::Font download failed, system font will be used"; rm -f app/src/main/assets/fonts/rounded.ttf; }
+        ls -la app/src/main/assets/fonts || true

@@ -142,7 +142,8 @@ enum class KeyType { CHARACTER, SHIFT, BACKSPACE, MODE_SYMBOLS, SYMBOLS_PAGE, GL
 
 enum class ShiftState { OFF, SINGLE, CAPS_LOCK }
 
-enum class ActivePanel { KEYBOARD, EMOJI, TRANSLATE, GIF, CLIPBOARD, VOICE, PLUGINS }
+/** EMOJI_SEARCH — поиск эмодзи: клавиатура печатает в строку поиска. */
+enum class ActivePanel { KEYBOARD, EMOJI, EMOJI_SEARCH, TRANSLATE, GIF, CLIPBOARD, VOICE, PLUGINS }
 
 @Immutable
 data class KeyModel(
@@ -233,22 +234,44 @@ object KeyboardLayouts {
     private val COMMA_VARIANTS = listOf(";", ":", ",", "'", "\"")
     private val PERIOD_VARIANTS = listOf("?", "!", "…", ".", ",", ":", "-")
 
+    /** Своя клавиша у пробела на буквенной раскладке: «,» и «.» с вариантами как в Gboard, остальное — из каталога. */
+    private fun slotKey(symbol: String): KeyModel? {
+        val s = symbol.trim().take(4)
+        if (s.isEmpty()) return null
+        return KeyModel(
+            s, weight = 1f, customVariants = when (s) {
+                "," -> COMMA_VARIANTS
+                "." -> PERIOD_VARIANTS
+                else -> null
+            }
+        )
+    }
+
     /**
-     * Нижний ряд: ?123 · 🌐 · 😀 · пробел · ввод; на страницах символов ещё «,» и «.» по бокам пробела.
+     * Нижний ряд: ?123 · 🌐 · 😀 · [своя клавиша] · пробел · [своя клавиша] · ввод;
+     * на страницах символов вместо своих клавиш «,» и «.» по бокам пробела.
      * Скрытые кнопки отдают ширину пробелу.
      * Удержание 🌐 — список языков.
      */
-    private fun bottom(mode: String, space: String, letters: Boolean, globe: Boolean, emoji: Boolean, punct: Boolean, languages: List<String>): KeyRow {
-        // «,» и «.» — только на страницах символов (?123), буквенная раскладка остаётся прежней
+    private fun bottom(
+        mode: String, space: String, letters: Boolean, globe: Boolean, emoji: Boolean, punct: Boolean,
+        languages: List<String>, leftSlot: String = "", rightSlot: String = ""
+    ): KeyRow {
+        // «,» и «.» — только на страницах символов (?123), на буквах — клавиши, выбранные в настройках
         val withPunct = punct && !letters
-        val spaceWeight = 3.9f + (if (globe) 0f else 1.1f) + (if (emoji) 0f else 1.1f) - (if (withPunct) 1.6f else 0f)
+        val left = if (letters) slotKey(leftSlot) else null
+        val right = if (letters) slotKey(rightSlot) else null
+        val spaceWeight = 3.9f + (if (globe) 0f else 1.1f) + (if (emoji) 0f else 1.1f) - (if (withPunct) 1.6f else 0f) -
+            (left?.weight ?: 0f) - (right?.weight ?: 0f)
         return KeyRow(
             buildList {
                 add(KeyModel(mode, KeyType.MODE_SYMBOLS, if (withPunct) 1.35f else 1.5f, if (letters && !withPunct) punctuation else emptyList()))
                 if (globe) add(KeyModel("globe", KeyType.GLOBE, if (withPunct) 1f else 1.1f, if (languages.size > 1) languages else emptyList()))
                 if (emoji) add(KeyModel("emoji", KeyType.STICKERS, if (withPunct) 1f else 1.1f))
                 if (withPunct) add(KeyModel(",", weight = 0.9f, customVariants = COMMA_VARIANTS))
+                left?.let { add(it) }
                 add(KeyModel(space, KeyType.SPACE, max(2.2f, spaceWeight)))
+                right?.let { add(it) }
                 if (withPunct) add(KeyModel(".", weight = 0.9f, customVariants = PERIOD_VARIANTS))
                 add(KeyModel("enter", KeyType.ENTER, if (withPunct) 1.6f else 1.8f))
             }
@@ -296,10 +319,13 @@ object KeyboardLayouts {
         globe: Boolean = true,
         emoji: Boolean = true,
         punct: Boolean = true,
-        languages: List<String> = emptyList()
+        languages: List<String> = emptyList(),
+        leftSlot: String = "",
+        rightSlot: String = ""
     ): List<KeyRow> {
         // раскладка из плагина: без {space} заменяет только верхние ряды, с {space} — всю клавиатуру
-        val custom = PluginRepository.layouts[layoutId(lang, page)]
+        val id = layoutId(lang, page)
+        val custom = ScriptHost.layoutOverrides[id] ?: PluginRepository.layouts[id]
         if (custom != null && custom.any { r -> r.keys.any { it.type == KeyType.SPACE } }) {
             return custom.map { r ->
                 KeyRow(r.keys.map {
@@ -316,7 +342,7 @@ object KeyboardLayouts {
             2 -> (custom ?: symbols2) + bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages)
             else -> {
                 val letters = custom ?: lettersFor(lang)
-                val base = letters + bottom("?123", lang.spaceLabel, true, globe, emoji, punct, languages)
+                val base = letters + bottom("?123", lang.spaceLabel, true, globe, emoji, punct, languages, leftSlot, rightSlot)
                 if (withNumbers) listOf(numberRow) + base else base
             }
         }
@@ -377,46 +403,6 @@ object KeyboardLayouts {
             }
         }
         return KeyRow(keys, height)
-    }
-}
-
-@Immutable
-data class EmojiCategory(val title: String, val icon: String, val emojis: List<String>)
-
-object EmojiCatalog {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    var categories by mutableStateOf<List<EmojiCategory>>(emptyList())
-        private set
-    @Volatile private var started = false
-
-    private val defs: List<Triple<String, String, List<IntRange>>> = listOf(
-        Triple("Смайлы", "😀", listOf(0x1F600..0x1F64F, 0x1F910..0x1F92F, 0x1F970..0x1F97A, 0x1FAE0..0x1FAE8)),
-        Triple("Люди", "👋", listOf(0x1F440..0x1F4AA, 0x1F590..0x1F596, 0x1F91A..0x1F91F, 0x1F930..0x1F93E, 0x1FAF0..0x1FAF8)),
-        Triple("Природа", "🦊", listOf(0x1F400..0x1F43F, 0x1F980..0x1F9AE, 0x1F330..0x1F343, 0x1FAB0..0x1FABD)),
-        Triple("Еда", "🍕", listOf(0x1F344..0x1F37F, 0x1F950..0x1F96F, 0x1F9C0..0x1F9CB, 0x1FAD0..0x1FAD9)),
-        Triple("Спорт", "⚽", listOf(0x1F3A0..0x1F3CA, 0x1F3CF..0x1F3FA, 0x1F93A..0x1F94F)),
-        Triple("Транспорт", "🚀", listOf(0x1F680..0x1F6C5, 0x1F300..0x1F320, 0x1F5FA..0x1F5FF)),
-        Triple("Символы", "💎", listOf(0x1F4A0..0x1F53D, 0x2600..0x26FF, 0x2700..0x27BF))
-    )
-
-    fun warmUp() {
-        if (started) return
-        started = true
-        scope.launch {
-            val paint = AndroidPaint()
-            val list = defs.map { (title, icon, ranges) -> EmojiCategory(title, icon, generate(ranges, paint)) }
-            withContext(Dispatchers.Main) { categories = list }
-        }
-    }
-
-    private fun generate(ranges: List<IntRange>, paint: AndroidPaint): List<String> {
-        val out = ArrayList<String>(256)
-        for (r in ranges) for (cp in r) {
-            if (cp in 0x1F3FB..0x1F3FF || !Character.isDefined(cp)) continue
-            val s = String(Character.toChars(cp))
-            if (runCatching { paint.hasGlyph(s) }.getOrDefault(false)) out.add(s)
-        }
-        return out.distinct()
     }
 }
 

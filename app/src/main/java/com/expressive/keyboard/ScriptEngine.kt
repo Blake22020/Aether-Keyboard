@@ -17,7 +17,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
+import androidx.compose.ui.graphics.toArgb
 import org.mozilla.javascript.BaseFunction
 import org.mozilla.javascript.ContextFactory
 import org.mozilla.javascript.NativeArray
@@ -131,6 +133,12 @@ private class Mod(val plugin: KeyboardPlugin) {
     val panels = LinkedHashMap<String, Pair<ScriptPanel, JsFunction?>>()
     val timers = HashMap<Int, Runnable>()
     var nextTimer = 1
+    /** Что мод рисует поверх клавиатуры (kb.overlay). */
+    var overlay: List<OverlayItem> = emptyList()
+    /** Раскладки, заданные на лету (kb.setLayout). */
+    val layouts = HashMap<String, List<KeyRow>>()
+    /** Оформление, заданное на лету (kb.setSkin). */
+    var skin: KeyboardSkin? = null
     fun has(p: String) = p in plugin.permissions
 }
 
@@ -152,13 +160,26 @@ object ScriptHost {
         private set
     /** Журнал скриптов: console.log, ошибки и время работы. */
     val logs = mutableStateMapOf<String, List<String>>()
+    /** Всё, что моды рисуют поверх клавиатуры. */
+    var overlayItems by mutableStateOf<List<OverlayItem>>(emptyList())
+        private set
+    /** Есть подписчики на "frame" — клавиатура шлёт кадры анимации. */
+    var wantsFrames by mutableStateOf(false)
+        private set
+    /** Раскладки из kb.setLayout: важнее раскладок из манифестов плагинов. */
+    var layoutOverrides by mutableStateOf<Map<String, List<KeyRow>>>(emptyMap())
+        private set
+    /** Оформление из kb.setSkin: важнее выбранного в настройках. */
+    var skinOverride by mutableStateOf<KeyboardSkin?>(null)
+        private set
 
     private const val CALL_BUDGET_MS = 300L
     private const val LOAD_BUDGET_MS = 2000L
     private const val MAX_TIMERS = 64
     /** События, которые показывают набираемый текст или буфер, приходят только плагинам с разрешением. */
     private val EVENT_PERMS = mapOf(
-        "key" to "read_text", "word" to "read_text", "suggest" to "read_text", "start" to "read_text", "clipboard" to "clipboard"
+        "key" to "read_text", "word" to "read_text", "suggest" to "read_text", "start" to "read_text", "press" to "read_text",
+        "clipboard" to "clipboard"
     )
 
     fun log(pluginId: String, line: String) {
@@ -216,6 +237,23 @@ object ScriptHost {
     private fun publish() {
         buttons = mods.values.flatMap { m -> m.buttons.values.map { it.first } }
         panels = mods.values.flatMap { m -> m.panels.values.map { it.first } }
+        publishOverlay()
+        wantsFrames = mods.values.any { it.handlers["frame"]?.isNotEmpty() == true }
+        val lay = HashMap<String, List<KeyRow>>()
+        for (m in mods.values) for ((k, v) in m.layouts) lay.putIfAbsent(k, v)
+        if (lay != layoutOverrides) layoutOverrides = lay
+        val skin = mods.values.firstNotNullOfOrNull { it.skin }
+        if (skin !== skinOverride) skinOverride = skin
+    }
+
+    private fun publishOverlay() {
+        val items = mods.values.flatMap { it.overlay }
+        if (items.isNotEmpty() || overlayItems.isNotEmpty()) overlayItems = items
+    }
+
+    /** Кадр анимации для подписчиков "frame": dt — миллисекунды с прошлого кадра. */
+    fun frame(dt: Long) {
+        emit("frame", dt.toDouble())
     }
 
     // ------------------------------------------------------------------ события
@@ -344,16 +382,17 @@ object ScriptHost {
 
         val kb = cx.newObject(s)
         ScriptableObject.putProperty(kb, "pluginId", id)
-        ScriptableObject.putProperty(kb, "apiVersion", 1)
+        ScriptableObject.putProperty(kb, "apiVersion", 2)
 
         // --- регистрация
         def(kb, "on") { _, a ->
             val ev = str(a, 0)
             val fn = a.getOrNull(1) as? JsFunction ?: throw IllegalArgumentException("kb.on(событие, функция)")
             m.handlers.getOrPut(ev) { ArrayList() } += fn
+            if (ev == "frame") main.post { publish() }
             Unit
         }
-        def(kb, "off") { _, a -> m.handlers.remove(str(a, 0)); Unit }
+        def(kb, "off") { _, a -> m.handlers.remove(str(a, 0)); main.post { publish() }; Unit }
         def(kb, "addButton") { _, a ->
             val o = opts(a, 0)
             val title = o["title"]?.toString() ?: throw IllegalArgumentException("addButton: нужно title")
@@ -415,6 +454,77 @@ object ScriptHost {
         def(kb, "status") { _, a -> b()?.scriptStatus(str(a, 0)); Unit }
         def(kb, "toast") { _, a -> Toast.makeText(ctx, str(a, 0), Toast.LENGTH_SHORT).show(); Unit }
         def(kb, "vibrate") { _, a -> b()?.scriptVibrate(num(a, 0, 20.0).toInt().coerceIn(1, 400)); Unit }
+
+        // --- слой поверх клавиатуры, клавиши и анимация
+        def(kb, "overlay") { _, a ->
+            val v = fromJs(a.getOrNull(0))
+            val list = v as? List<*> ?: listOfNotNull(v)
+            m.overlay = list.take(4000).mapNotNull { OverlayItem.parse(it) }
+            publishOverlay()
+            Unit
+        }
+        def(kb, "clearOverlay") { _, _ -> m.overlay = emptyList(); publishOverlay(); Unit }
+        def(kb, "keyboardSize") { _, _ ->
+            val sz = KeyboardGeometry.size()
+            mapOf("width" to (sz?.width ?: 0f), "height" to (sz?.height ?: 0f))
+        }
+        def(kb, "keys") { _, _ ->
+            KeyboardGeometry.snapshot().mapNotNull { h ->
+                val name = KeyboardGeometry.nameOf(h)
+                val r = KeyboardGeometry.rectOf(h)
+                if (name.isEmpty() || r == null) null
+                else mapOf(
+                    "label" to name, "type" to h.key.type.name.lowercase(), "x" to r.left, "y" to r.top,
+                    "w" to r.width, "h" to r.height, "cx" to r.center.x, "cy" to r.center.y
+                )
+            }
+        }
+        def(kb, "keyRect") { _, a ->
+            val h = KeyboardGeometry.find(str(a, 0)) ?: return@def null
+            val r = KeyboardGeometry.rectOf(h) ?: return@def null
+            mapOf("x" to r.left, "y" to r.top, "w" to r.width, "h" to r.height, "cx" to r.center.x, "cy" to r.center.y)
+        }
+        def(kb, "pressKey") { _, a ->
+            val h = KeyboardGeometry.find(str(a, 0)) ?: return@def false
+            h.pulse()
+            if (opts(a, 1)["type"] != false) {
+                val k = h.key
+                val text = when (k.type) {
+                    KeyType.CHARACTER -> k.text(b()?.scriptShift().let { it != null && it != "off" })
+                    KeyType.SPACE -> " "
+                    else -> ""
+                }
+                KeyboardGeometry.actions?.commitKey(k, text)
+            }
+            true
+        }
+        def(kb, "colors") { _, _ ->
+            val p = KeyboardGeometry.palette ?: return@def emptyMap<String, Any?>()
+            fun hex(c: androidx.compose.ui.graphics.Color) = String.format("#%08X", c.toArgb())
+            mapOf(
+                "background" to hex(p.background), "key" to hex(p.letter), "keyText" to hex(p.onLetter),
+                "func" to hex(p.func), "funcText" to hex(p.onFunc), "accent" to hex(p.accent), "accentText" to hex(p.onAccent)
+            )
+        }
+        def(kb, "setLayout") { _, a ->
+            val lid = str(a, 0)
+            require(lid in PluginParser.LAYOUT_IDS || Regex("^[a-z]{2,3}([-_][a-z0-9]{2,8})?$").matches(lid)) { "setLayout: код языка, symbols или symbols2" }
+            val rows = fromJs(a.getOrNull(1)) as? List<*>
+            if (rows == null) m.layouts.remove(lid)
+            else m.layouts[lid] = rows.take(8).mapNotNull { r ->
+                (r as? List<*>)?.let { keys ->
+                    KeyboardLayouts.parseRow(JSONArray(keys.map { x -> if (x is Map<*, *>) JSONObject(x) else x }), lid !in PluginParser.LAYOUT_IDS, id)
+                }
+            }.filter { it.keys.isNotEmpty() }
+            publish()
+            Unit
+        }
+        def(kb, "setSkin") { _, a ->
+            val v = fromJs(a.getOrNull(0)) as? Map<*, *>
+            m.skin = v?.let { SkinParser.parse(JSONObject(it)) }
+            publish()
+            Unit
+        }
 
         // --- буфер обмена
         def(kb, "clipboard") { _, _ -> need(m, "clipboard"); b()?.scriptClipboard() ?: emptyList<String>() }

@@ -232,16 +232,16 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
                 }
                 .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
-            Text("Авто → ${target.uppercase()}", color = palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+            Text(tr("Авто") + " → ${target.uppercase()}", color = palette.onFunc, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
         }
         Column(Modifier.weight(1f)) {
             Text(
-                if (input.isEmpty()) "Печатайте — переведу" else input,
+                if (input.isEmpty()) tr("Печатайте — переведу") else input,
                 color = if (input.isEmpty()) palette.muted else palette.onLetter,
                 fontFamily = font, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             val result = when {
-                state.translatorLoading -> "Перевожу…"
+                state.translatorLoading -> tr("Перевожу…")
                 else -> state.translatorResult
             }
             if (result.isNotEmpty()) {
@@ -262,61 +262,158 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
     }
 }
 
+/** Вкладки внизу между ABC и ⌫, как в Gboard; удержание эмодзи с тонами кожи — выбор тона. */
 @Composable
 internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
     val context = LocalContext.current
     val cats = EmojiCatalog.categories
     val recents = EmojiRecents.items
-    var tab by remember { mutableIntStateOf(0) }
-    val tabs = remember(cats) { listOf("🕒") + cats.map { it.icon } }
-    val list = if (tab == 0) recents else cats.getOrNull(tab - 1)?.emojis.orEmpty()
-    // свой шрифт эмодзи (например, в стиле iOS или Twemoji) — только для отображения на клавиатуре
+    var tab by remember { mutableIntStateOf(if (recents.isEmpty()) 1 else 0) }
+    var variantsOf by remember { mutableStateOf<EmojiItem?>(null) }
+    val style = settings.emojiStyle
     val emojiFont = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
+    val imageStyle = EmojiStyles.isImageStyle(style)
+    val list: List<String> = remember(tab, cats, recents, style) {
+        if (tab == 0) recents
+        else cats.getOrNull(tab - 1)?.items.orEmpty()
+            .filter { it.system || (imageStyle && EmojiStyles.has(context, style, it.index)) || style == EmojiStyles.CUSTOM }
+            .map { it.emoji }
+    }
     Column(Modifier.fillMaxSize().clip(PanelShape).background(palette.panel)) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            itemsIndexed(tabs) { i, icon ->
-                val sel = i == tab
-                Box(
-                    Modifier.size(width = 48.dp, height = 36.dp).clip(RoundedCornerShape(if (sel) 18.dp else 12.dp))
-                        .background(if (sel) palette.accentSoft else Color.Transparent).clickable { tab = i },
-                    contentAlignment = Alignment.Center
+        val v = variantsOf
+        if (v != null) {
+            // выбор тона кожи: основной вариант и все тона
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp).clip(RoundedCornerShape(18.dp))
+                    .background(palette.accentSoft).horizontalScroll(rememberScrollState()).padding(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                (listOf(v.emoji) + v.variants).forEach { e ->
+                    Box(
+                        Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).clickable {
+                            actions.commitEmoji(e)
+                            variantsOf = null
+                        },
+                        contentAlignment = Alignment.Center
+                    ) { EmojiGlyph(e, 32.dp, style, emojiFont) }
+                }
+                Box(Modifier.size(40.dp).clip(CircleShape).clickable { variantsOf = null }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Close, tr("Закрыть"), tint = palette.onAccentSoft, modifier = Modifier.size(20.dp))
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (list.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (cats.isEmpty()) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                    else Text(tr("Пока пусто"), color = palette.muted, fontFamily = font)
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(44.dp),
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                    contentPadding = PaddingValues(top = 6.dp, bottom = 6.dp)
                 ) {
-                    SlotIcon(if (i == 0) "emoji_recent" else "emoji_cat_${i - 1}", if (sel) palette.onAccentSoft else palette.onLetter, 22.dp) {
-                        Text(icon, fontSize = 20.sp, fontFamily = emojiFont)
+                    gridItems(list, key = { it }) { e ->
+                        val item = remember(e) { EmojiCatalog.item(e) }
+                        Box(
+                            Modifier.height(46.dp).clip(RoundedCornerShape(14.dp)).combinedClickable(
+                                onLongClick = { if (item != null && item.variants.isNotEmpty()) variantsOf = item }
+                            ) { actions.commitEmoji(e) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            EmojiGlyph(e, 32.dp, style, emojiFont)
+                            if (item != null && item.variants.isNotEmpty() && item.emoji == e) {
+                                // точка в углу: у эмодзи есть тона кожи
+                                Box(
+                                    Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 4.dp).size(4.dp)
+                                        .clip(CircleShape).background(palette.muted)
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
-        if (list.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                if (cats.isEmpty()) CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
-                else Text("Пока пусто", color = palette.muted, fontFamily = font)
-            }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(44.dp),
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 6.dp)
-            ) {
-                gridItems(list) { e ->
-                    Box(
-                        Modifier.height(46.dp).clip(RoundedCornerShape(14.dp)).clickable { actions.commitEmoji(e) },
-                        contentAlignment = Alignment.Center
-                    ) { Text(e, fontSize = 27.sp, fontFamily = emojiFont) }
-                }
-            }
-        }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 6.dp, top = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             PillButton("ABC", palette.func, palette.onFunc, font) { actions.togglePanel(ActivePanel.KEYBOARD) }
-            Spacer(Modifier.weight(1f))
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                item {
+                    Box(
+                        Modifier.size(width = 40.dp, height = 36.dp).clip(RoundedCornerShape(12.dp))
+                            .clickable { actions.togglePanel(ActivePanel.EMOJI_SEARCH) },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Rounded.Search, tr("Поиск эмодзи"), tint = palette.onLetter, modifier = Modifier.size(22.dp)) }
+                }
+                item { EmojiTab(tab == 0, palette, "emoji_recent", "🕒", style, emojiFont) { tab = 0; variantsOf = null } }
+                itemsIndexed(cats) { i, c ->
+                    EmojiTab(tab == i + 1, palette, "emoji_cat_$i", c.icon, style, emojiFont) { tab = i + 1; variantsOf = null }
+                }
+            }
             RepeatingBackspace(palette) { actions.deleteBackward() }
+        }
+    }
+}
+
+@Composable
+private fun EmojiTab(sel: Boolean, palette: KeyPalette, slot: String, icon: String, style: String, font: FontFamily?, onClick: () -> Unit) {
+    Box(
+        Modifier.size(width = 40.dp, height = 36.dp).clip(RoundedCornerShape(if (sel) 18.dp else 12.dp))
+            .background(if (sel) palette.accentSoft else Color.Transparent).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        SlotIcon(slot, if (sel) palette.onAccentSoft else palette.onLetter, 22.dp) { EmojiGlyph(icon, 24.dp, style, font) }
+    }
+}
+
+/** Поиск эмодзи: запрос печатается обычной клавиатурой, результаты — лентой над ней. */
+@Composable
+internal fun EmojiSearchBar(state: KeyboardState, actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
+    val context = LocalContext.current
+    val query = state.emojiQuery
+    val cats = EmojiCatalog.categories
+    val style = settings.emojiStyle
+    val emojiFont = remember(settings.emojiFontVersion) { FontRepository.emoji(context, settings.emojiFontVersion) }
+    val results = remember(query, cats) {
+        if (query.isBlank()) EmojiRecents.items.mapNotNull { EmojiCatalog.item(it) }.distinct() else EmojiCatalog.search(query)
+    }
+    Column(
+        Modifier.fillMaxWidth().clip(PanelShape).background(palette.panel).padding(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Rounded.Search, null, tint = palette.muted, modifier = Modifier.padding(start = 6.dp).size(20.dp))
+            Text(
+                query.ifEmpty { tr("Найти эмодзи: кот, сердце, smile…") }, Modifier.weight(1f),
+                color = if (query.isEmpty()) palette.muted else palette.onLetter, fontFamily = font, fontSize = 15.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Box(
+                Modifier.size(36.dp).clip(CircleShape).clickable { actions.togglePanel(ActivePanel.EMOJI) },
+                contentAlignment = Alignment.Center
+            ) { Icon(Icons.Rounded.Close, tr("Закрыть"), tint = palette.muted, modifier = Modifier.size(20.dp)) }
+        }
+        LazyRow(Modifier.fillMaxWidth().height(46.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (results.isEmpty()) item {
+                Box(Modifier.height(46.dp).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+                    Text(tr("Ничего не найдено"), color = palette.muted, fontFamily = font, fontSize = 14.sp)
+                }
+            }
+            items(results.size) { i ->
+                val item = results[i]
+                Box(
+                    Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).clickable { actions.commitEmoji(item.emoji) },
+                    contentAlignment = Alignment.Center
+                ) { EmojiGlyph(item.emoji, 32.dp, style, emojiFont) }
+            }
         }
     }
 }
@@ -390,12 +487,12 @@ internal fun ClipboardPanel(state: KeyboardState, actions: KeyboardActions, pale
     ) {
         // высота шапки постоянная — записи не прыгают, когда «Очистить» пропадает
         Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Буфер обмена", Modifier.weight(1f), color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
-            if (items.size > pinned.size) PillButton("Очистить", palette.func, palette.onFunc, font) { actions.clearClipboard() }
+            Text(tr("Буфер обмена"), Modifier.weight(1f), color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+            if (items.size > pinned.size) PillButton(tr("Очистить"), palette.func, palette.onFunc, font) { actions.clearClipboard() }
         }
         if (items.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("Скопируйте текст — он появится здесь", color = palette.muted, fontFamily = font)
+                Text(tr("Скопируйте текст — он появится здесь"), color = palette.muted, fontFamily = font)
             }
         } else {
             LazyVerticalGrid(
@@ -465,7 +562,7 @@ internal fun VoicePanel(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceEvenly
     ) {
-        Text("Голосовой ввод · ${state.language.label}", color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+        Text(tr("Голосовой ввод") + " · ${state.language.label}", color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
         Box(
             modifier = Modifier
                 .size(112.dp)
@@ -488,8 +585,8 @@ internal fun VoicePanel(
         )
         if (!voice.hasPermission()) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PillButton("Разрешить микрофон", palette.accent, palette.onAccent, font) { actions.openSettings() }
-                PillButton("Системный ввод", palette.func, palette.onFunc, font) { actions.openVoiceFallback() }
+                PillButton(tr("Разрешить микрофон"), palette.accent, palette.onAccent, font) { actions.openSettings() }
+                PillButton(tr("Системный ввод"), palette.func, palette.onFunc, font) { actions.openVoiceFallback() }
             }
         }
     }
@@ -537,7 +634,7 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
                     "Нет плагинов с действиями или символами",
                     color = palette.onLetter, fontFamily = font, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
                 )
-                PillButton("Открыть плагины", palette.accent, palette.onAccent, font) { actions.openSettings() }
+                PillButton(tr("Открыть плагины"), palette.accent, palette.onAccent, font) { actions.openSettings() }
             }
         } else {
             LazyRow(

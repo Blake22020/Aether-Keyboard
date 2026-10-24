@@ -10,6 +10,10 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- название системной проверки правописания в настройках -->
+        <intent>
+            <action android:name="android.service.textservice.SpellCheckerService" />
+        </intent>
     </queries>
 
     <application

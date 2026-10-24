@@ -780,8 +780,8 @@ object PluginRepository {
     }
 
     /** Оформление, выбранное в настройках, если его плагин включён. */
-    fun activeSkin(settings: KeyboardSettings): KeyboardSkin? =
-        if (settings.skinPlugin.isEmpty()) null else active.firstOrNull { it.id == settings.skinPlugin }?.skin
+    fun activeSkin(settings: KeyboardSettings): KeyboardSkin? = ScriptHost.skinOverride
+        ?: if (settings.skinPlugin.isEmpty()) null else active.firstOrNull { it.id == settings.skinPlugin }?.skin
 
     /** Тема + настройки + оформление одной кнопкой. */
     fun applyLook(context: Context, p: KeyboardPlugin) {

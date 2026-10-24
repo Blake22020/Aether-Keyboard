@@ -140,6 +140,13 @@ import kotlin.math.sqrt
 
 object HapticsEngine {
     @Volatile private var cached: Vibrator? = null
+    @Volatile private var hasMotor: Boolean? = null
+    @Volatile private var amplitudeControl = false
+    @Volatile private var audio: AudioManager? = null
+    /** Вибрация — системный вызов; он уходит в свой поток, чтобы не задерживать обработку касания. */
+    private val worker: android.os.Handler by lazy {
+        android.os.Handler(android.os.HandlerThread("haptics").also { it.start() }.looper)
+    }
 
     private fun vibrator(context: Context): Vibrator? {
         cached?.let { return it }
@@ -152,33 +159,45 @@ object HapticsEngine {
             }
         }.getOrNull()
         cached = v
+        hasMotor = runCatching { v?.hasVibrator() == true }.getOrDefault(false)
+        amplitudeControl = runCatching { v?.hasAmplitudeControl() == true }.getOrDefault(false)
         return v
+    }
+
+    /** Мотор есть: проверяется один раз, а не на каждое нажатие. */
+    private fun motor(context: Context): Vibrator? {
+        val v = vibrator(context)
+        return if (hasMotor == true) v else null
+    }
+
+    private fun play(v: Vibrator, effect: VibrationEffect) {
+        worker.post { runCatching { v.vibrate(effect) } }
     }
 
     fun keyPress(context: Context, view: View?, s: KeyboardSettings, special: Boolean) {
         if (s.soundEnabled) runCatching {
-            val audio = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            val audio = audio ?: (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager).also { audio = it }
             audio?.playSoundEffect(
                 if (special) AudioManager.FX_KEYPRESS_SPACEBAR else AudioManager.FX_KEYPRESS_STANDARD, s.soundVolume
             )
         }
         if (!s.hapticsEnabled) return
         runCatching {
-            val v = vibrator(context)
-            if (v == null || !v.hasVibrator()) {
+            val v = motor(context)
+            if (v == null) {
                 view?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                 return
             }
             val boost = s.strongSpecialKeys && special
             val q = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
             when (HapticMode.fromId(s.hapticMode)) {
-                HapticMode.CLICK -> if (q) v.vibrate(
+                HapticMode.CLICK -> if (q) play(v,
                     VibrationEffect.createPredefined(if (boost) VibrationEffect.EFFECT_HEAVY_CLICK else VibrationEffect.EFFECT_CLICK)
                 ) else oneShot(v, if (boost) 22L else 12L, if (boost) 200 else 140)
-                HapticMode.TICK -> if (q) v.vibrate(
+                HapticMode.TICK -> if (q) play(v,
                     VibrationEffect.createPredefined(if (boost) VibrationEffect.EFFECT_CLICK else VibrationEffect.EFFECT_TICK)
                 ) else oneShot(v, if (boost) 14L else 8L, if (boost) 130 else 80)
-                HapticMode.HEAVY -> if (q) v.vibrate(
+                HapticMode.HEAVY -> if (q) play(v,
                     VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK)
                 ) else oneShot(v, 28L, 255)
                 HapticMode.CUSTOM -> {
@@ -193,10 +212,10 @@ object HapticsEngine {
     fun tick(context: Context, view: View?, s: KeyboardSettings) {
         if (!s.hapticsEnabled) return
         runCatching {
-            val v = vibrator(context)
-            if (v != null && v.hasVibrator()) {
+            val v = motor(context)
+            if (v != null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    v.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+                    play(v, VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
                 } else oneShot(v, 7L, 80)
             } else view?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
@@ -205,8 +224,7 @@ object HapticsEngine {
     fun release(context: Context, s: KeyboardSettings) {
         if (!s.hapticsEnabled || !s.vibrateOnRelease) return
         runCatching {
-            val v = vibrator(context) ?: return
-            if (!v.hasVibrator()) return
+            val v = motor(context) ?: return
             oneShot(v, (s.vibrationMs * 0.45f).toLong(), (s.vibrationAmplitude * 0.5f).toInt())
         }
     }
@@ -222,8 +240,8 @@ object HapticsEngine {
     private fun oneShot(v: Vibrator, duration: Long, amplitude: Int) {
         runCatching {
             val d = duration.coerceIn(1L, 100L)
-            val a = if (v.hasAmplitudeControl()) amplitude.coerceIn(1, 255) else VibrationEffect.DEFAULT_AMPLITUDE
-            v.vibrate(VibrationEffect.createOneShot(d, a))
+            val a = if (amplitudeControl) amplitude.coerceIn(1, 255) else VibrationEffect.DEFAULT_AMPLITUDE
+            play(v, VibrationEffect.createOneShot(d, a))
         }
     }
 }

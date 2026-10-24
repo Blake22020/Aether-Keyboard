@@ -100,7 +100,14 @@ object GlideDecoder {
         val end = path.last()
         val ideal = ArrayList<Offset>(16)
         val scored = ArrayList<Pair<String, Float>>()
+        val near = keyW * 1.5f
         for ((word, prior) in lexicon) {
+            // сначала дешёвая проверка первой и последней буквы: она отсекает почти весь словарь
+            if (word.isEmpty()) continue
+            val f = keys[word[0]] ?: ALIASES[word[0]]?.let { keys[it] } ?: continue
+            if ((f - start).getDistance() > near) continue
+            val l = keys[word[word.length - 1]] ?: ALIASES[word[word.length - 1]]?.let { keys[it] } ?: continue
+            if ((l - end).getDistance() > near) continue
             ideal.clear()
             var ok = true
             for (ch in word) {

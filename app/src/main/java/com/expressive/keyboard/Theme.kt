@@ -261,7 +261,7 @@ internal fun typographyWith(f: FontFamily): Typography {
 val LocalKeyWeight = staticCompositionLocalOf { FontWeight.Bold }
 
 @Composable
-fun ExpressiveTheme(settings: KeyboardSettings, content: @Composable () -> Unit) {
+fun ExpressiveTheme(settings: KeyboardSettings, appUi: Boolean = false, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val systemDark = isSystemInDarkTheme()
     val dark = when (settings.themeMode) {
@@ -274,7 +274,11 @@ fun ExpressiveTheme(settings: KeyboardSettings, content: @Composable () -> Unit)
         resolveColorScheme(context, dark, settings.themeMode == "AMOLED", settings)
     }
     val font = remember(settings.fontStyle, settings.customFontVersion) { FontRepository.resolve(context, settings) }
-    val typography = remember(font) { typographyWith(font) }
+    // экран настроек не берёт свой/моно/serif шрифт клавиатуры: с ним заголовки и кнопки расползаются
+    val uiFont = remember(font, appUi, settings.fontStyle) {
+        if (appUi && settings.fontStyle != "ROUNDED" && settings.fontStyle != "SYSTEM") FontRepository.resolve(context, KeyboardSettings()) else font
+    }
+    val typography = remember(uiFont) { typographyWith(uiFont) }
     CompositionLocalProvider(LocalKeyFont provides font, LocalKeyWeight provides FontWeight(settings.fontWeight)) {
         MaterialTheme(colorScheme = scheme, typography = typography, content = content)
     }

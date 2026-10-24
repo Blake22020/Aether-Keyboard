@@ -15,7 +15,7 @@ import kotlin.math.min
 // ============================================================================
 
 /** Как из набранных клавиш получается слово: просто буквы, слоги хангыля или Telex. */
-enum class Composer { NONE, HANGUL, TELEX }
+enum class Composer { NONE, HANGUL, TELEX, PINYIN, KANA }
 
 @Immutable
 class KeyboardLanguage(
@@ -45,6 +45,18 @@ class KeyboardLanguage(
     override fun equals(other: Any?): Boolean = other is KeyboardLanguage && other.id == id && other.fromPlugin == fromPlugin
     override fun hashCode(): Int = id.hashCode()
     override fun toString(): String = id
+
+    /** Название для настроек на языке интерфейса: по-русски из описания, по-английски — из системы. */
+    fun displayTitle(): String {
+        if (!I18n.isEnglish) return title
+        val name = runCatching { java.util.Locale.forLanguageTag(locale).getDisplayName(java.util.Locale.ENGLISH) }.getOrNull()
+        return when (composer) {
+            Composer.PINYIN -> "Chinese ${if (id == "zh-tw") "Traditional " else ""}(Pinyin)"
+            Composer.KANA -> "Japanese (Romaji → Kana)"
+            Composer.TELEX -> "Vietnamese (Telex)"
+            else -> name?.takeIf { it.isNotBlank() && it != locale } ?: title
+        }
+    }
 
     /** Все буквы раскладки — для свайп-набора и поиска соседних клавиш. */
     val letters: Set<String> by lazy { rows.flatten().toSet() }
@@ -89,6 +101,20 @@ object Languages {
     )
 
     private val QWERTY = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+
+    /** InScript (хинди): у других индийских письменностей те же клавиши — блоки Unicode идут параллельно. */
+    private val INSCRIPT_ROWS = listOf("ौ ै ा ी ू ब ह ग द ज ड", "ो े ् ि ु प र क त च ट", "ं म न व ल स य")
+    private const val INSCRIPT_SHIFT = "ौऔ ैऐ ाआ ीई ूऊ बभ हङ गघ दध जझ डढ ोओ ेए ्अ िइ ुउ पफ रऱ कख तथ चछ टठ ंँ मण नञ वऋ लळ सश यष"
+
+    /** Раскладка InScript в другой письменности: сдвиг кода символа; несуществующих там букв просто нет. */
+    private fun indic(id: String, label: String, space: String, title: String, locale: String, offset: Int, dict: String?): KeyboardLanguage {
+        fun conv(t: String): String? {
+            val r = t.map { c -> if (c in '\u0900'..'\u097F') c + offset else c }.joinToString("")
+            return r.takeIf { it.all { ch -> Character.getType(ch) != Character.UNASSIGNED.toInt() } }
+        }
+        fun convAll(s: String) = s.split(' ').filter { it.isNotEmpty() }.mapNotNull(::conv).joinToString(" ")
+        return L(id, label, space, title, locale, INSCRIPT_ROWS.map(::convAll), shift = convAll(INSCRIPT_SHIFT), dict = dict, hasCase = false)
+    }
     private val QWERTZ = listOf("qwertzuiop", "asdfghjkl", "yxcvbnm")
     private const val RU_ROWS_1 = "йцукенгшщзх"
     private const val RU_ROWS_2 = "фывапролджэ"
@@ -146,7 +172,7 @@ object Languages {
         L("af", "AF", "Afrikaans", "Африкаанс", "af-ZA", QWERTY, "eéèêë iîï oôö uûü yý", dict = "af"),
         L("id", "ID", "Indonesia", "Индонезийский", "id-ID", QWERTY, dict = "id"),
         L("ms", "MS", "Melayu", "Малайский", "ms-MY", QWERTY, dict = "ms"),
-        L("tl", "TL", "Filipino", "Филиппинский", "fil-PH", QWERTY, "nñ", dict = null),
+        L("tl", "TL", "Filipino", "Филиппинский", "fil-PH", QWERTY, "nñ", dict = "tl"),
         L("sw", "SW", "Kiswahili", "Суахили", "sw-KE", QWERTY, dict = null),
         L("vi", "VI", "Tiếng Việt", "Вьетнамский (Telex)", "vi-VN", QWERTY, "aăâ dđ eê oôơ uư", dict = "vi", composer = Composer.TELEX, autoCorrect = false),
         L(
@@ -203,6 +229,37 @@ object Languages {
             shift = "ๅ+ ภ๑ ถ๒ ุ๓ ึ๔ คู ต฿ จ๕ ข๖ ช๗ ไ\" ำฎ พฑ ะธ ัํ ี๊ รณ นฯ ยญ บฐ ฃฅ ฟฤ หฆ กฏ ดโ เฌ ้็ ่๋ าษ สศ วซ ผ( ป) แฉ อฮ ิฺ ื์ มฒ ใฬ ฝฦ",
             dict = "th", hasCase = false, autoCorrect = false
         ),
+        indic("bn", "BN", "বাংলা", "Бенгальский", "bn-IN", 0x80, "bn"),
+        indic("pa", "PA", "ਪੰਜਾਬੀ", "Панджаби", "pa-IN", 0x100, null),
+        indic("gu", "GU", "ગુજરાતી", "Гуджарати", "gu-IN", 0x180, null),
+        indic("or", "OR", "ଓଡ଼ିଆ", "Ория", "or-IN", 0x200, null),
+        indic("ta", "TA", "தமிழ்", "Тамильский", "ta-IN", 0x280, "ta"),
+        indic("te", "TE", "తెలుగు", "Телугу", "te-IN", 0x300, "te"),
+        indic("kn", "KN", "ಕನ್ನಡ", "Каннада", "kn-IN", 0x380, null),
+        indic("ml", "ML", "മലയാളം", "Малаялам", "ml-IN", 0x400, "ml"),
+        L("zh", "中", "中文 · 拼音", "Китайский (пиньинь)", "zh-CN", QWERTY, dict = null, hasCase = false, composer = Composer.PINYIN, autoCorrect = false),
+        L("zh-tw", "繁", "中文 · 繁體", "Китайский традиционный (пиньинь)", "zh-TW", QWERTY, dict = null, hasCase = false, composer = Composer.PINYIN, autoCorrect = false),
+        L("ja", "あ", "日本語", "Японский (ромадзи → кана)", "ja-JP", QWERTY, dict = null, hasCase = false, composer = Composer.KANA, autoCorrect = false),
+        L("br", "BR", "Brezhoneg", "Бретонский", "br-FR", QWERTY, "eê uùü nñ", dict = "br"),
+        L("la", "LA", "Latina", "Латынь", "la", QWERTY, "aā eē iī oō uū", dict = null),
+        L("lb", "LB", "Lëtzebuergesch", "Люксембургский", "lb-LU", QWERTZ, "eéëè aä uü", dict = null),
+        L("fy", "FY", "Frysk", "Фризский", "fy-NL", QWERTY, "aâ eêé oô uûú", dict = null),
+        L("fo", "FO", "Føroyskt", "Фарерский", "fo-FO", listOf("qwertyuiopå", "asdfghjklæø", "zxcvbnmð"), "aá ií oó uú yý", dict = null),
+        L("gd", "GD", "Gàidhlig", "Шотландский гэльский", "gd-GB", QWERTY, "aà eè iì oò uù", dict = null),
+        L("ht", "HT", "Kreyòl", "Гаитянский креольский", "ht-HT", QWERTY, "aà eè oò", dict = null),
+        L("mi", "MI", "Māori", "Маори", "mi-NZ", QWERTY, "aā eē iī oō uū", dict = null),
+        L("haw", "HAW", "ʻŌlelo Hawaiʻi", "Гавайский", "haw-US", QWERTY, "aā eē iī oō uū", dict = null),
+        L("so", "SO", "Soomaali", "Сомали", "so-SO", QWERTY, dict = null),
+        L("yo", "YO", "Yorùbá", "Йоруба", "yo-NG", QWERTY, "eẹéè oọóò sṣ aáà iíì uúù", dict = null),
+        L("ha", "HA", "Hausa", "Хауса", "ha-NG", QWERTY, "bɓ dɗ kƙ yƴ", dict = null),
+        L("zu", "ZU", "isiZulu", "Зулу", "zu-ZA", QWERTY, dict = null),
+        L("xh", "XH", "isiXhosa", "Коса", "xh-ZA", QWERTY, dict = null),
+        L("jv", "JV", "Jawa", "Яванский", "jv-ID", QWERTY, "eéè", dict = null),
+        L("su", "SU", "Sunda", "Сунданский", "su-ID", QWERTY, "eé", dict = null),
+        L("ceb", "CEB", "Cebuano", "Себуанский", "ceb-PH", QWERTY, dict = null),
+        L("mg", "MG", "Malagasy", "Малагасийский", "mg-MG", QWERTY, "oô", dict = null),
+        L("tk", "TK", "Türkmen", "Туркменский", "tk-TM", listOf("qwertyuiopňä", "asdfghjklşü", "zxcvbnmçöý"), "zž", dict = null),
+        L("ku", "KU", "Kurdî", "Курдский (курманджи)", "ku-TR", QWERTY, "eê iî uû cç sş", dict = null),
         L(
             "ko", "KO", "한국어", "Корейский", "ko-KR",
             listOf("ㅂㅈㄷㄱㅅㅛㅕㅑㅐㅔ", "ㅁㄴㅇㄹㅎㅗㅓㅏㅣ", "ㅋㅌㅊㅍㅠㅜㅡ"),

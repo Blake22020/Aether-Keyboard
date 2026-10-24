@@ -9,7 +9,9 @@
 | `.zip` | Мод с файлами: `plugin.json` + `main.js` + картинки и данные (до 8 МБ) |
 
 Скрипт мода получает объект `kb` и может реагировать на нажатия и слова, вставлять и менять текст,
-добавлять свои панели, кнопки, клавиши, подсказки, хранить данные, ходить в сеть, менять иконки, язык и настройки.
+добавлять свои панели, кнопки, клавиши, подсказки, хранить данные, ходить в сеть, менять иконки, язык и настройки,
+**рисовать и анимировать что угодно поверх клавиатуры**, знать, где какая клавиша, «нажимать» клавиши, менять раскладку
+и оформление прямо на ходу. Например, можно сделать персонажа, который ходит по клавишам и печатает (пример ниже).
 Скрипт выполняется в песочнице (JavaScript ES5 + большая часть ES6: `let`/`const`, стрелочные функции): без доступа
 к Java, файлам и телефону; каждый вызов ограничен по времени (300 мс, загрузка — 2 с), так что зависший мод не
 подвесит клавиатуру. Ошибки и `console.log` видны в карточке плагина («Журнал скрипта»).
@@ -60,6 +62,8 @@ kb.addButton({ title: "Привет", icon: "👋", toolbar: true, onClick: func
 | `finish`, `show`, `hide` | — | поле закрылось / клавиатура показана / скрыта |
 | `language` | код языка | — |
 | `clipboard` | скопированный текст | — *clipboard* |
+| `press` | `{ label, type }` — нажата любая клавиша (`a`, `space`, `enter`, `shift`…) | — *read_text* |
+| `frame` | миллисекунды с прошлого кадра | ~30 раз в секунду, пока клавиатура на экране — для анимаций |
 
 `kb.off(событие)` снимает все обработчики события.
 
@@ -112,6 +116,58 @@ kb.addCommand(name, fn)                                      // команда �
 | `{ type: "spacer" }` | `size` |
 
 После нажатия на элемент панель перерисовывается автоматически.
+
+## Рисование поверх клавиатуры и клавиши
+
+Слой мода лежит поверх клавиш и не мешает печатать. Координаты и размеры — в dp от левого верхнего угла клавиатуры.
+
+| Функция | Описание |
+|---|---|
+| `kb.overlay([...])` / `kb.clearOverlay()` | Нарисовать набор элементов (заменяет прошлый) / убрать |
+| `kb.keyboardSize()` | `{ width, height }` |
+| `kb.keys()` | Все клавиши: `[{ label, type, x, y, w, h, cx, cy }]` (`label` — буква или `space`, `enter`, `shift`, `backspace`, `symbols`, `globe`, `emoji`) |
+| `kb.keyRect(label)` | Прямоугольник одной клавиши или `null` |
+| `kb.pressKey(label, { type: true })` | Анимация нажатия; `type: false` — только анимация, без ввода |
+| `kb.colors()` | Текущие цвета: `background`, `key`, `keyText`, `func`, `funcText`, `accent`, `accentText` |
+| `kb.setLayout(id, rows)` / `kb.setLayout(id, null)` | Своя раскладка на ходу (формат рядов — как в `layouts`) / вернуть обычную |
+| `kb.setSkin({...})` / `kb.setSkin(null)` | Оформление на ходу (формат — как `skin`) / снять |
+
+Элементы `kb.overlay`:
+
+| Элемент | Поля |
+|---|---|
+| `{ type: "rect" }` | `x`, `y`, `w`, `h`, `color`, `radius`, `stroke` (толщина контура; 0 — заливка) |
+| `{ type: "circle" }` | `x`, `y` (левый верхний угол), `r` или `w`/`h`, `color`, `stroke` |
+| `{ type: "line" }` / `{ type: "path" }` | `points: [[x, y], …]`, `color`, `width`, `closed`, `fill` |
+| `{ type: "text" }` | `x`, `y`, `text`, `size`, `color`, `bold`, `center` |
+| `{ type: "pixels" }` | Пиксель-арт: `x`, `y`, `scale` (размер пикселя), `rows: ["..##..", …]`, `palette: { "#": "#D97757" }`, `flipX` |
+| `{ type: "image" }` | `x`, `y`, `w`, `h`, `src` (`data:image/…` или `kb.asset("pic.png")`), `flipX` |
+
+У всех элементов есть `alpha` (0..1) и `rotation` (градусы).
+
+Пример: персонаж ходит от клавиши к клавише и «нажимает» их.
+
+```js
+/* @plugin
+{ "id": "my.walker", "name": "Питомец", "icon": "🐾" }
+*/
+var SPRITE = ["..####..", ".######.", "##.##.##", "########", ".#.##.#.", "#.#..#.#"];
+var x = 20, y = 20, target = null, flip = false;
+kb.on("frame", function (dt) {
+  if (!target) {
+    var keys = kb.keys().filter(function (k) { return k.type === "character"; });
+    if (!keys.length) return;
+    target = keys[Math.floor(Math.random() * keys.length)];
+  }
+  var dx = target.cx - x, dy = target.cy - 12 - y, d = Math.sqrt(dx * dx + dy * dy);
+  var step = 0.12 * dt;                       // скорость: 120 dp в секунду
+  if (d <= step) {
+    kb.pressKey(target.label, { type: false }); // только анимация — в поле ничего не вводится
+    target = null;
+  } else { x += dx / d * step; y += dy / d * step; flip = dx < 0; }
+  kb.overlay([{ type: "pixels", x: x - 12, y: y - 9, scale: 3, rows: SPRITE, palette: { "#": "#D97757" }, flipX: flip }]);
+});
+```
 
 ## Данные, сеть, таймеры
 

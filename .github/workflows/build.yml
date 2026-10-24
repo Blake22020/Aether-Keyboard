@@ -1,0 +1,44 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Android setup
+        uses: ./.github/actions/android-setup
+
+      - name: Build Release APK (fast, recommended)
+        continue-on-error: true
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload Release APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExpressiveKeyboard-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
+
+      - name: Upload Debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExpressiveKeyboard-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
