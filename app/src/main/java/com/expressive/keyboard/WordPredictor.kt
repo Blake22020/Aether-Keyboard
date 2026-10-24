@@ -1158,7 +1158,7 @@ object WordPredictorEngine {
     // ---------------------------------------------------------------- подсказки
 
     /** Продолжения по префиксу: сначала ваши частые слова, затем самые частые в языке. */
-    private fun completions(lower: String, lang: KeyboardLanguage, limit: Int): List<String> {
+    private fun completions(lower: String, lang: KeyboardLanguage, limit: Int, previous: String = ""): List<String> {
         val scored = HashMap<String, Float>()
         val prefix = "${lang.id}:$lower"
         for ((k, n) in userWords) {
@@ -1190,7 +1190,23 @@ object WordPredictorEngine {
                 scored[w] = min(scored[w] ?: Float.MAX_VALUE, s)
             }
         }
-        return scored.entries.sortedBy { it.value }.take(limit).map { it.key }
+        val context = previous.trim().lowercase()
+        if (context.isNotEmpty()) {
+            val prefixBigram = "${lang.id}:$context|"
+            for ((word, score) in scored.toMap()) {
+                val learned = userBigrams[prefixBigram + word] ?: 0
+                val builtIn = when (lang.id) {
+                    "ru" -> ruBigrams[context]
+                    "en" -> enBigrams[context]
+                    else -> null
+                }
+                val natural = builtIn?.indexOf(word) ?: -1
+                val bonus = (if (learned >= 2) (0.4f * kotlin.math.ln(1f + learned)).coerceAtMost(1.7f) else 0f) +
+                    (if (natural >= 0) 0.75f / (natural + 1) else 0f)
+                scored[word] = score - bonus
+            }
+        }
+        return scored.entries.sortedWith(compareBy<Map.Entry<String, Float>> { it.value }.thenBy { it.key }).take(limit).map { it.key }
     }
 
     fun predict(
@@ -1238,7 +1254,7 @@ object WordPredictorEngine {
         val fix = if (autoCorrect) mergeSystem(clean, own, sys, lang, strength) else null
         // варианты системной проверки — когда она считает слово опечаткой
         val sysAlt = if (sys != null && sys.typo) sys.suggestions.map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix } else emptyList()
-        val comps = completions(lower, lang, 3).map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
+        val comps = completions(lower, lang, 3, previous).map { applyCase(it, cap, allCaps) }.filter { it != clean && it != fix }
 
         val chips = when {
             fix != null -> listOf(
