@@ -1034,6 +1034,33 @@ internal fun HeaderBar(
     }
 }
 
+/** Shrinks a candidate only when its rendered width exceeds the available chip. */
+@Composable
+private fun AetherFitText(
+    text: String,
+    color: Color,
+    fontFamily: FontFamily,
+    initialSize: Float,
+    fontWeight: FontWeight,
+    maxLines: Int
+) {
+    var fittedSize by remember(text, initialSize) { mutableStateOf(initialSize) }
+    Text(
+        text = text,
+        color = color,
+        fontFamily = fontFamily,
+        fontSize = fittedSize.sp,
+        fontWeight = fontWeight,
+        maxLines = maxLines,
+        softWrap = false,
+        onTextLayout = { layout ->
+            if (layout.hasVisualOverflow && fittedSize > 7f) {
+                fittedSize = (fittedSize - 0.75f).coerceAtLeast(7f)
+            }
+        }
+    )
+}
+
 @Composable
 internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
     val chips = state.suggestions
@@ -1071,14 +1098,13 @@ internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, pal
                     .padding(horizontal = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
+                AetherFitText(
                     text = if (chip.isEmpty) "…" else chip.displayText,
                     color = if (chip.isEmpty) fg.copy(alpha = 0.5f) else fg,
                     fontFamily = font,
-                    fontSize = 15.sp,
+                    initialSize = 15f,
                     fontWeight = if (primary) FontWeight.ExtraBold else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 1
                 )
             }
         }
@@ -1143,14 +1169,13 @@ internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: Key
                 contentAlignment = Alignment.Center
             ) {
                 if (!chip.isEmpty) {
-                    Text(
+                    AetherFitText(
                         text = chip.displayText,
                         color = if (primary) fg else fg.copy(alpha = 0.82f),
                         fontFamily = font,
-                        fontSize = 16.sp,
+                        initialSize = 16f,
                         fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 1
                     )
                 }
             }
