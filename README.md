@@ -79,3 +79,6 @@ To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 kotlalipopus is retained in the original LICENSE file. Changes to this fork are maintained independently by Blake22020.# Expressive-Keyboard
+
+
+Build validation: GitHub Actions runs on feature branches and pull requests; merge only after a successful Android build.
