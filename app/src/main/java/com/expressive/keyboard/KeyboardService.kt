@@ -148,6 +148,7 @@ class KeyboardState {
     var panel by mutableStateOf(ActivePanel.KEYBOARD)
     var toolbarOpen by mutableStateOf(false)
     var suggestions by mutableStateOf(SuggestionChipModel.EMPTY_ROW)
+    var likelyNextLetter by mutableStateOf<Char?>(null)
     /** Варианты китайского/японского ввода: показываются лентой вместо трёх подсказок. */
     var candidates by mutableStateOf<List<String>>(emptyList())
     var enterAction by mutableIntStateOf(EditorInfo.IME_ACTION_UNSPECIFIED)
@@ -888,6 +889,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     private fun schedulePredictions() {
         predictionJob?.cancel()
+        kb.likelyNextLetter = null
         val comp = kb.language.composer
         if (Cjk.isCjk(comp) && flags.suggestions && composing.isNotEmpty() && rawComposing.isNotEmpty()) {
             val raw = rawComposing
@@ -948,6 +950,10 @@ class ComposeKeyboardService : InputMethodService(),
                 // сокращение из личного словаря Android
                 chips[1] = SuggestionChipModel("→ " + personalShortcut.take(24), personalShortcut, isPrimary = true, isKeepExact = true)
             }
+            kb.likelyNextLetter = if (!flags.isPassword && word.length >= 2 && lang.composer == Composer.NONE) {
+                snap.chips.asSequence().map { it.commitWord }.filter { it.length > word.length && it.startsWith(word, ignoreCase = true) }
+                    .map { it[word.length].lowercaseChar() }.firstOrNull { it.isLetter() }
+            } else null
             kb.suggestions = chips
             precomputed = snap.autoCorrection
             precomputedOwn = snap.ownCorrection
