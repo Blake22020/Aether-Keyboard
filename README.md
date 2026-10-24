@@ -74,7 +74,7 @@ To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in
 - Separate application ID allows installation alongside the upstream release.
 - Existing upstream plugin and JavaScript mod formats remain unchanged.
 
-**Work in progress:** iPhone-like predictive touch targets, refined T9 ranking and screenshot collection are not implemented yet. Android restricts system-wide screenshot access; the existing image clipboard panel handles image clips that other apps expose.
+**Screenshot sharing:** choose Share on any screenshot or image and select Aether Keyboard; the picture will be added to the Android clipboard. Android does not grant an ordinary keyboard background access to all screenshots, so fully automatic monitoring is not provided. Context-aware completion ranking is included. iPhone-like dynamic touch regions are still work in progress. Android restricts system-wide screenshot access; the existing image clipboard panel handles image clips that other apps expose.
 
 ## License
 
