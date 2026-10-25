@@ -491,6 +491,14 @@ class ComposeKeyboardService : InputMethodService(),
     private var cjkPieces = 0
 
     private val clipListener = ClipboardManager.OnPrimaryClipChangedListener { syncClipboard() }
+    private val screenshotWatcher by lazy { ScreenshotWatcher(this) { uri, stamp ->
+        if (!settings.incognito && settings.clipboardHistory && settings.screenshotHistory) {
+            serviceScope.launch {
+                val clip = ClipImages.save(this@ComposeKeyboardService, uri, "image/png", stamp)
+                if (clip != null) addClip(clip, stamp)
+            }
+        }
+    } }
 
     private val settings: KeyboardSettings get() = KeyboardPrefs.current(this)
 
@@ -539,6 +547,7 @@ class ComposeKeyboardService : InputMethodService(),
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboardManager?.addPrimaryClipChangedListener(clipListener)
         syncClipboard()
+        screenshotWatcher.refresh(settings.screenshotHistory && settings.clipboardHistory && !settings.incognito)
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -575,6 +584,7 @@ class ComposeKeyboardService : InputMethodService(),
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        screenshotWatcher.refresh(settings.screenshotHistory && settings.clipboardHistory && !settings.incognito)
         moveLifecycle(Lifecycle.State.RESUMED)
         WordPredictorEngine.loadPersonalDictionary(this)
         resetForInput(info, restarting)
@@ -618,6 +628,7 @@ class ComposeKeyboardService : InputMethodService(),
     }
 
     override fun onDestroy() {
+        screenshotWatcher.stop()
         if (ScriptHost.bridge === this) ScriptHost.bridge = null
         WordPredictorEngine.onDictionaryLoaded = null
         SystemSpell.onResult = null
