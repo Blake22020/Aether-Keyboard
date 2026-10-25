@@ -494,7 +494,8 @@ class ComposeKeyboardService : InputMethodService(),
     private val screenshotWatcher by lazy { ScreenshotWatcher(this) { uri, stamp ->
         if (!settings.incognito && settings.clipboardHistory && settings.screenshotHistory) {
             serviceScope.launch {
-                val clip = ClipImages.save(this@ComposeKeyboardService, uri, "image/png", stamp)
+                val mime = contentResolver.getType(uri)?.takeIf { it.startsWith("image/") } ?: "image/png"
+                val clip = ClipImages.save(this@ComposeKeyboardService, uri, mime, stamp)
                 if (clip != null) addClip(clip, stamp)
             }
         }
