@@ -388,6 +388,7 @@ internal fun KeyView(
     actions: KeyboardActions,
     glideEnabled: Boolean,
     numberRow: Boolean,
+    predictedKey: KeyModel?,
     modifier: Modifier
 ) {
     val pluginState = PluginRepository.active
@@ -420,6 +421,7 @@ internal fun KeyView(
     val cSettings by rememberUpdatedState(settings)
     val cActions by rememberUpdatedState(actions)
     val cGlide by rememberUpdatedState(glideEnabled)
+    val cPredicted by rememberUpdatedState(predictedKey)
     val cUpHint by rememberUpdatedState(upHint)
     val fr = shapeFractions(key.type)
     val capPx = with(LocalDensity.current) { settings.cornerRadiusDp.dp.toPx() }
@@ -667,8 +669,23 @@ internal fun KeyView(
                                 }
                                 when (gesture) {
                                     KeyGesture.RELEASED -> if (!instant) {
-                                        act.keyTouch(touchX, touchY)
-                                        act.commitKey(k, out)
+                                        // A modest, context-aware expansion into the neighbouring key.
+                                        // Normal keys, long presses, instant input and glide gestures remain unchanged.
+                                        val target = cPredicted?.takeIf { letterKey && it != k && lbl.length == 1 }
+                                        val snap = if (target != null) layer.coords?.let { glide.snapshot(it) } else null
+                                        val near = snap?.first?.get(target?.label?.lowercase()?.firstOrNull())
+                                        val position = origin()?.let { it + down.position }
+                                        val selfCenter = origin()?.let { it + Offset(size.width / 2f, size.height / 2f) }
+                                        val targetDistance = if (near != null && position != null) (position - near).getDistance() else Float.MAX_VALUE
+                                        val selfDistance = if (selfCenter != null && position != null) (position - selfCenter).getDistance() else 0f
+                                        if (target != null && targetDistance < size.width * 0.78f &&
+                                            targetDistance < selfDistance + size.width * 0.12f) {
+                                            act.keyTouch(0f, 0f)
+                                            act.commitKey(target, target.text(upper))
+                                        } else {
+                                            act.keyTouch(touchX, touchY)
+                                            act.commitKey(k, out)
+                                        }
                                     }
                                     KeyGesture.CANCELED -> Unit
                                     KeyGesture.SWIPE_UP -> {
@@ -792,7 +809,7 @@ internal fun KeyView(
                 fontSize = when {
                     key.type == KeyType.MODE_SYMBOLS || key.type == KeyType.SYMBOLS_PAGE -> (15f * scale).sp
                     numberRow -> (17f * settings.keyLabelScale * scale).sp
-                    else -> ((settings.keyHeightDp * 0.4f).coerceIn(18f, 25f) * settings.keyLabelScale * scale).sp
+                    else -> ((settings.keyHeightDp * 0.4f).coerceIn(12f, 25f) * settings.keyLabelScale * scale).sp
                 },
                 maxLines = 1,
                 softWrap = false,
@@ -1034,6 +1051,34 @@ internal fun HeaderBar(
     }
 }
 
+/** Shrinks a candidate only when its rendered width exceeds the available chip. */
+@Composable
+private fun AetherFitText(
+    text: String,
+    color: Color,
+    fontFamily: FontFamily,
+    initialSize: Float,
+    fontWeight: FontWeight,
+    maxLines: Int
+) {
+    var fittedSize by remember(text, initialSize) { mutableStateOf(initialSize) }
+    Text(
+        text = text,
+        color = color,
+        fontFamily = fontFamily,
+        fontSize = fittedSize.sp,
+        fontWeight = fontWeight,
+        maxLines = maxLines,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+        onTextLayout = { layout ->
+            if (layout.hasVisualOverflow && fittedSize > 7f) {
+                fittedSize = (fittedSize - 0.75f).coerceAtLeast(7f)
+            }
+        }
+    )
+}
+
 @Composable
 internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
     val chips = state.suggestions
@@ -1071,14 +1116,13 @@ internal fun SuggestionStrip(state: KeyboardState, actions: KeyboardActions, pal
                     .padding(horizontal = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
+                AetherFitText(
                     text = if (chip.isEmpty) "…" else chip.displayText,
                     color = if (chip.isEmpty) fg.copy(alpha = 0.5f) else fg,
                     fontFamily = font,
-                    fontSize = 15.sp,
+                    initialSize = 15f,
                     fontWeight = if (primary) FontWeight.ExtraBold else FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    maxLines = 1
                 )
             }
         }
@@ -1143,14 +1187,13 @@ internal fun PlainSuggestionStrip(chips: List<SuggestionChipModel>, actions: Key
                 contentAlignment = Alignment.Center
             ) {
                 if (!chip.isEmpty) {
-                    Text(
+                    AetherFitText(
                         text = chip.displayText,
                         color = if (primary) fg else fg.copy(alpha = 0.82f),
                         fontFamily = font,
-                        fontSize = 16.sp,
+                        initialSize = 16f,
                         fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = 1
                     )
                 }
             }
@@ -1665,6 +1708,8 @@ internal fun KeyGrid(
                         actions = actions,
                         glideEnabled = glideEnabled,
                         numberRow = isNumberRow,
+                        predictedKey = if (isChar) rows.asSequence().flatMap { it.keys.asSequence() }
+                            .firstOrNull { it.type == KeyType.CHARACTER && it.label.length == 1 && it.label[0].lowercaseChar() == state.likelyNextLetter } else null,
                         modifier = Modifier.weight(key.weight).fillMaxHeight()
                     )
                 }

@@ -155,7 +155,7 @@ class MainActivity : ComponentActivity() {
 }
 
 enum class SettingsPage(val title: String, val subtitle: String, val icon: ImageVector, val shape: ExpressiveShapePreset) {
-    HOME("Expressive Keyboard", "", Icons.Rounded.Keyboard, ExpressiveShapePreset.COOKIE_12),
+    HOME("Aether Keyboard", "", Icons.Rounded.Keyboard, ExpressiveShapePreset.COOKIE_12),
     LOOK("Тема и шрифт", "Светлая или тёмная тема, форма акцентов, шрифт, анимации", Icons.Rounded.Palette, ExpressiveShapePreset.COOKIE_12),
     COLORS("Цвета и фон", "Свой цвет, цвета клавиш, прозрачность, картинка под клавишами", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
     KEYS("Размер и кнопки", "Высота клавиш, ряд цифр, кнопки у пробела, режим одной руки", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
@@ -615,7 +615,7 @@ internal fun KeysPage(settings: KeyboardSettings) {
     SettingsSection("Размеры") {
         SliderItem(
             icon = Icons.Rounded.Height, title = "Высота клавиш",
-            value = settings.keyHeightDp, range = 44f..68f,
+            value = settings.keyHeightDp, range = 24f..68f,
             format = { "${it.roundToInt()} dp" },
             onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("key_height_dp", v) } }
         )
@@ -833,6 +833,19 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
                 format = { "${it.roundToInt()}" },
                 onCommit = { v -> KeyboardPrefs.edit(context) { putInt("clipboard_size", v.roundToInt()) } }
             )
+        }
+    }
+    if (part == SettingsPage.CLIPBOARD) SettingsSection("Скриншоты") {
+        ToggleItem(Icons.Rounded.Image, "Автоматически добавлять скриншоты",
+            "Новые скриншоты появятся в истории буфера и будут предложены над клавиатурой. Требуется доступ к фотографиям.",
+            settings.screenshotHistory) { enabled ->
+            KeyboardPrefs.edit(context) { putBoolean("screenshot_history", enabled) }
+            if (enabled) {
+                val permission = if (android.os.Build.VERSION.SDK_INT >= 33)
+                    android.Manifest.permission.READ_MEDIA_IMAGES else android.Manifest.permission.READ_EXTERNAL_STORAGE
+                if (context.checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    (context as? android.app.Activity)?.requestPermissions(arrayOf(permission), 5021)
+            }
         }
     }
     if (part == SettingsPage.CLIPBOARD) SettingsSection("GIF") {

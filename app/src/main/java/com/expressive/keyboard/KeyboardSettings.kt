@@ -209,6 +209,7 @@ data class KeyboardSettings(
     val spaceSwipe: String = "CURSOR",            // CURSOR | LANGUAGE | OFF
     val backspaceSwipe: Boolean = true,           // свайп влево по ⌫ удаляет слово
     val clipboardHistory: Boolean = true,
+    val screenshotHistory: Boolean = false,
     val clipboardSize: Int = 24,
     val soundVolume: Float = 0.6f,
     val giphyKey: String = "",
@@ -312,7 +313,7 @@ object KeyboardPrefs {
         val font = p.getString("font_style", "ROUNDED")
         return KeyboardSettings(
             themeMode = p.getString("theme_mode", "SYSTEM") ?: "SYSTEM",
-            keyHeightDp = p.getFloat("key_height_dp", 54f).coerceIn(44f, 68f),
+            keyHeightDp = p.getFloat("key_height_dp", 54f).coerceIn(24f, 68f),
             cornerRadiusDp = p.getFloat("corner_radius_dp", 16f).coerceIn(6f, 30f),
             keySpacingDp = p.getFloat("key_spacing_dp", 5f).coerceIn(2f, 8f),
             rowSpacingDp = p.getFloat("row_spacing_dp", 8f).coerceIn(4f, 12f),
@@ -366,6 +367,7 @@ object KeyboardPrefs {
             spaceSwipe = p.getString("space_swipe", "CURSOR") ?: "CURSOR",
             backspaceSwipe = p.getBoolean("backspace_swipe", true),
             clipboardHistory = p.getBoolean("clipboard_history", true),
+            screenshotHistory = p.getBoolean("screenshot_history", false),
             clipboardSize = p.getInt("clipboard_size", 24).coerceIn(5, 100),
             soundVolume = p.getFloat("sound_volume", 0.6f).coerceIn(0.05f, 1f),
             giphyKey = p.getString("giphy_key", "") ?: "",
@@ -425,7 +427,7 @@ object KeyboardPrefs {
             "show_number_row", "show_key_borders", "key_preview", "auto_capitalize", "auto_correct_enabled",
             "double_space_period", "haptics_enabled", "vibrate_on_release", "strong_special_keys", "sound_enabled",
             "show_hints", "show_suggestions", "show_mic_button", "show_emoji_key", "show_globe_key", "panel_animations",
-            "backspace_swipe", "clipboard_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
+            "backspace_swipe", "clipboard_history", "screenshot_history", "instant_input", "glide_typing", "glide_trail", "swipe_up_hint",
             "space_long_press", "auto_pair", "incognito", "dict_auto_download", "punctuation_keys", "smart_punctuation",
             "system_spellcheck"
         ).forEach { put(it, 'b') }
