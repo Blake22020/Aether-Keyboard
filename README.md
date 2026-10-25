@@ -76,6 +76,13 @@ To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in
 
 **Screenshot sharing:** choose Share on any screenshot or image and select Aether Keyboard; the picture will be added to the Android clipboard. Android does not grant an ordinary keyboard background access to all screenshots, so fully automatic monitoring is not provided. Context-aware completion ranking is included. iPhone-like dynamic touch regions are still work in progress. Android restricts system-wide screenshot access; the existing image clipboard panel handles image clips that other apps expose.
 
+
+## Thanks and attribution
+
+Thank you to [kotlalipopus](https://github.com/kotlalipopus/Expressive-Keyboard) for the original Expressive Keyboard project. Aether Keyboard is an independent MIT-licensed fork, with the original copyright notice preserved in [LICENSE](LICENSE).
+
+Thank you to the Android Open Source Project contributors for open Android keyboard research and [LatinIME](https://android.googlesource.com/platform/packages/inputmethods/LatinIME/). LatinIME's Apache-2.0 code is **not currently incorporated into this fork**, and Aether does not contain Google's proprietary Gboard code or claim affiliation with Google.
+
 ## License
 
 [MIT](LICENSE). Copyright (c) 2026 kotlalipopus is retained in the original LICENSE file. Changes to this fork are maintained independently by Blake22020.# Expressive-Keyboard
