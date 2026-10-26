@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +39,20 @@ import kotlin.math.roundToInt
 // клавиша (kb.keys), может «нажать» клавишу (kb.pressKey) и анимироваться покадрово (событие "frame").
 // Слой не перехватывает касания — печатать он не мешает.
 // ============================================================================
+
+/**
+ * Положение [child] в координатах этого слоя — или null, если один из них уже не на экране или они из разных
+ * окон. Окно клавиатуры Android пересоздаёт (поворот, смена темы), и на мгновение старые и новые клавиши
+ * живут одновременно: localPositionOf между ними бросает «layouts are not part of the same hierarchy».
+ */
+internal fun LayoutCoordinates.safePositionOf(child: LayoutCoordinates): Offset? {
+    if (!isAttached || !child.isAttached) return null
+    return try {
+        localPositionOf(child, Offset.Zero)
+    } catch (_: RuntimeException) {
+        null
+    }
+}
 
 /** Клавиша на экране: модель, подпись и место; pulse() проигрывает анимацию нажатия. */
 class KeyHandle(val key: KeyModel, val label: String, val holder: CoordsHolder, val pulse: () -> Unit)
@@ -58,18 +73,20 @@ object KeyboardGeometry {
         val k = h.holder.coords ?: return null
         val l = layer?.coords ?: return null
         val d = density?.density ?: return null
-        if (!k.isAttached || !l.isAttached) return null
-        val p = l.localPositionOf(k, Offset.Zero)
+        val p = l.safePositionOf(k) ?: return null
         return Rect(p.x / d, p.y / d, (p.x + k.size.width) / d, (p.y + k.size.height) / d)
     }
 
     fun size(): Size? {
-        val l = layer?.coords ?: return null
+        val l = layer?.coords?.takeIf { it.isAttached } ?: return null
         val d = density?.density ?: return null
         return Size(l.size.width / d, l.size.height / d)
     }
 
     fun snapshot(): List<KeyHandle> = synchronized(keys) { keys.toList() }
+
+    /** Клавиши, которые сейчас на экране: без старых, оставшихся от прошлого окна или уходящей панели. */
+    fun visible(): List<Pair<KeyHandle, Rect>> = snapshot().mapNotNull { h -> rectOf(h)?.let { h to it } }
 
     /** Подпись клавиши для модов: буква или имя служебной клавиши. */
     fun nameOf(h: KeyHandle): String = nameOf(h.key, h.label)
@@ -88,7 +105,7 @@ object KeyboardGeometry {
     }
 
     fun find(name: String): KeyHandle? {
-        val all = snapshot()
+        val all = visible().map { it.first }
         return all.firstOrNull { nameOf(it) == name } ?: all.firstOrNull { nameOf(it).equals(name, ignoreCase = true) }
     }
 }
