@@ -192,16 +192,69 @@ class LangDict(words: List<String>) {
     val rank: HashMap<String, Int> = HashMap<String, Int>(words.size * 2).also { m -> words.forEachIndexed { i, w -> m.putIfAbsent(w, i) } }
     /** По алфавиту — для поиска продолжений по префиксу. */
     val sorted: Array<String> = this.words.copyOf().also { it.sort() }
-    /** Индексы слов по первой букве (до 40 000 самых частых) — для поиска опечаток. */
-    val byFirst: Map<Char, IntArray> = run {
-        val tmp = HashMap<Char, ArrayList<Int>>()
-        for (i in 0 until min(this.words.size, 40_000)) {
+    /**
+     * Индекс опечаток SymSpell («симметричное удаление»): для 40 000 самых частых слов — хэши самого слова и
+     * всех его вариантов без одной буквы. Похожие слова находятся парой десятков двоичных поисков вместо
+     * перебора тысяч слов, и опечатка в первой букве ловится так же, как в остальных.
+     * Элемент: (хэш << 32) | номер слова, массив отсортирован.
+     */
+    private val deletes: LongArray = run {
+        val n = min(this.words.size, SYMSPELL_WORDS)
+        var count = 0
+        for (i in 0 until n) if (this.words[i].length <= SYMSPELL_MAX_LEN) count += this.words[i].length + 1
+        val out = LongArray(count)
+        var k = 0
+        for (i in 0 until n) {
             val w = this.words[i]
-            if (w.isNotEmpty()) tmp.getOrPut(w[0]) { ArrayList() }.add(i)
+            if (w.length > SYMSPELL_MAX_LEN) continue
+            out[k++] = pack(hashSkipping(w, -1, -1), i)
+            for (j in w.indices) out[k++] = pack(hashSkipping(w, j, -1), i)
         }
-        tmp.mapValues { it.value.toIntArray() }
+        out.sort()
+        out
     }
+
+    /** Номера слов, похожих на [lower]: совпадают после удаления не более одной буквы с каждой стороны или двух у набранного. */
+    fun similar(lower: String, out: MutableSet<Int>) {
+        val n = lower.length
+        if (n == 0 || n > SYMSPELL_MAX_LEN + 2) return
+        lookup(hashSkipping(lower, -1, -1), out)
+        for (a in 0 until n) {
+            lookup(hashSkipping(lower, a, -1), out)
+            // две лишние/ошибочные буквы — только в длинных словах, в коротких слишком много ложных совпадений
+            if (n >= 5) for (b in a + 1 until n) lookup(hashSkipping(lower, a, b), out)
+        }
+    }
+
+    private fun lookup(hash: Int, out: MutableSet<Int>) {
+        val key = hash.toLong() shl 32
+        var lo = 0
+        var hi = deletes.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (deletes[mid] < key) lo = mid + 1 else hi = mid
+        }
+        while (lo < deletes.size && (deletes[lo] ushr 32).toInt() == hash) {
+            out += (deletes[lo] and 0xFFFFFFFFL).toInt()
+            lo++
+        }
+    }
+
     val size: Int get() = words.size
+
+    companion object {
+        private const val SYMSPELL_WORDS = 40_000
+        private const val SYMSPELL_MAX_LEN = 20
+
+        private fun pack(hash: Int, index: Int): Long = (hash.toLong() shl 32) or index.toLong()
+
+        /** String.hashCode() строки без символов a и b — без создания самой строки. */
+        private fun hashSkipping(s: String, a: Int, b: Int): Int {
+            var h = 0
+            for (i in s.indices) if (i != a && i != b) h = 31 * h + s[i].code
+            return h
+        }
+    }
 }
 
 object Dictionaries {
@@ -291,7 +344,7 @@ object Dictionaries {
         val code = lang.dict ?: return
         if (isInstalled(context, code) || !tried.add(code)) return
         if (!KeyboardPrefs.current(context).dictAutoDownload) return
-        CoroutineScope(Dispatchers.IO).launch { download(context, code) }
+        CoroutineScope(Dispatchers.IO + BackgroundErrors).launch { download(context, code) }
     }
 
     fun delete(context: Context, code: String) {
@@ -348,7 +401,7 @@ object SystemSpell {
         if (p != null && now - p.at < 1500L) return
         pending[k] = Pending(CountDownLatch(1), now)
         val app = context.applicationContext
-        handler.post { send(app, lang.locale, word, k) }
+        handler.post { runCatching { send(app, lang.locale, word, k) }.onFailure { finish(k, null) } }
     }
 
     /** Ответ для слова; если запрос ещё в пути — ждёт его не дольше timeoutMs (по пробелу, обычно 0 мс). */
@@ -454,11 +507,16 @@ object SystemSpell {
     }
 
     private val listener = object : SpellCheckerSession.SpellCheckerSessionListener {
+        // ответы приходят в фоновом потоке: исключение здесь уронило бы всю клавиатуру
         override fun onGetSuggestions(results: Array<out SuggestionsInfo>?) {
-            results?.forEach { deliver(it) }
+            runCatching { results?.forEach { deliver(it) } }
         }
 
         override fun onGetSentenceSuggestions(results: Array<out SentenceSuggestionsInfo>?) {
+            runCatching { sentences(results) }
+        }
+
+        private fun sentences(results: Array<out SentenceSuggestionsInfo>?) {
             // пустой ответ — тоже ответ, иначе пробел ждал бы его до таймаута
             if (results.isNullOrEmpty()) return deliver(null)
             for (s in results) {
@@ -492,7 +550,7 @@ object WordPredictorEngine {
         }
     @Volatile private var started = false
     @Volatile private var appContext: Context? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
     private var saveJob: Job? = null
     private val glideCache = ConcurrentHashMap<String, List<Pair<String, Float>>>()
     /** Вызывается в главном потоке, когда словарь загрузился — клавиатура обновляет подсказки. */
@@ -507,6 +565,16 @@ object WordPredictorEngine {
     private const val EN_SEED =
         "hello hi hey thanks thank please sorry yes yeah okay ok sure maybe today tomorrow tonight " +
         "dont doesnt didnt isnt arent wont cant im youre"
+
+    /** С чего обычно начинают сообщение — пока ничего не набрано. */
+    private val SENTENCE_STARTERS = mapOf(
+        "ru" to listOf("я", "привет", "да"),
+        "uk" to listOf("я", "привіт", "так"),
+        "en" to listOf("i", "hi", "the"),
+        "de" to listOf("ich", "hallo", "ja"),
+        "es" to listOf("hola", "yo", "sí"),
+        "fr" to listOf("je", "salut", "oui")
+    )
 
     private val ruBigrams: Map<String, List<String>> = mapOf(
         "привет" to listOf("как", "что", "дела"),
@@ -959,28 +1027,24 @@ object WordPredictorEngine {
         touches: List<KeyTouch?>? = null
     ): List<Candidate> {
         val d = dictFor(lang) ?: return emptyList()
-        val first = lower[0]
-        val starts = LinkedHashSet<Char>()
-        starts += first
-        if (lower.length > 1) starts += lower[1]
-        lang.keyPositions.keys.forEach { if (adjacent(lang, first, it)) starts += it }
-        if (baseLetter(first) != first) starts += baseLetter(first)
-        lang.keyPositions.keys.forEach { if (soundAlike(first, it)) starts += it }
         val maxLenDiff = if (lower.length <= 4) 1 else 2
         val p = prev.trim().lowercase()
         val best = ArrayList<Candidate>()
-        for (c in starts) {
-            val idx = d.byFirst[c] ?: continue
-            checkCancelled()
-            for (i in idx) {
-                val w = d.words[i]
-                if (abs(w.length - lower.length) > maxLenDiff || w == lower) continue
-                val cost = editCost(lang, lower, w, maxCost, touches)
-                if (cost > maxCost) continue
-                val uc = userCount(lang, w)
-                val score = cost + freqCost(i) - 0.12f * kotlin.math.ln(1f + uc) - contextBonus(lang, p, w)
-                best += Candidate(w, cost, score, i)
-            }
+        checkCancelled()
+        // кандидаты из индекса SymSpell; «ё» ищем и как «е»
+        val idx = HashSet<Int>()
+        d.similar(lower, idx)
+        val plain = lower.map(::baseLetter).joinToString("")
+        if (plain != lower) d.similar(plain, idx)
+        checkCancelled()
+        for (i in idx) {
+            val w = d.words[i]
+            if (abs(w.length - lower.length) > maxLenDiff || w == lower) continue
+            val cost = editCost(lang, lower, w, maxCost, touches)
+            if (cost > maxCost) continue
+            val uc = userCount(lang, w)
+            val score = cost + freqCost(i) - 0.12f * kotlin.math.ln(1f + uc) - contextBonus(lang, p, w)
+            best += Candidate(w, cost, score, i)
         }
         best.sortBy { it.score }
         return best.distinctBy { it.word }.take(limit)
@@ -1193,17 +1257,17 @@ object WordPredictorEngine {
         val context = previous.trim().lowercase()
         if (context.isNotEmpty()) {
             val prefixBigram = "${lang.id}:$context|"
-            for ((word, score) in scored.toMap()) {
-                val learned = userBigrams[prefixBigram + word] ?: 0
+            for ((candidate, score) in scored.toMap()) {
+                val learned = userBigrams[prefixBigram + candidate] ?: 0
                 val builtIn = when (lang.id) {
                     "ru" -> ruBigrams[context]
                     "en" -> enBigrams[context]
                     else -> null
                 }
-                val natural = builtIn?.indexOf(word) ?: -1
+                val natural = builtIn?.indexOf(candidate) ?: -1
                 val bonus = (if (learned >= 2) (0.4f * kotlin.math.ln(1f + learned)).coerceAtMost(1.7f) else 0f) +
                     (if (natural >= 0) 0.75f / (natural + 1) else 0f)
-                scored[word] = score - bonus
+                scored[candidate] = score - bonus
             }
         }
         return scored.entries.sortedWith(compareBy<Map.Entry<String, Float>> { it.value }.thenBy { it.key }).take(limit).map { it.key }
@@ -1328,8 +1392,27 @@ object WordPredictorEngine {
                 "ru" -> ruBigrams[prev]?.let { set.addAll(it) }
                 "en" -> enBigrams[prev]?.let { set.addAll(it) }
             }
+            // связки, набранные хотя бы раз
+            if (set.size < 3) userBigrams.entries.asSequence()
+                .filter { it.key.startsWith(prefix) }
+                .sortedByDescending { it.value }
+                .take(3)
+                .forEach { set.add(it.key.substringAfter('|')) }
         }
-        val words = set.filter { it.isNotBlank() }.map { applyCase(it, cap, false) }
+        // остальное — самые частые слова языка, чтобы строка подсказок не стояла пустой («…»)
+        if (set.size < 3) {
+            val starters = if (prev.isEmpty()) SENTENCE_STARTERS[lang.id].orEmpty() else emptyList()
+            for (w in starters) if (set.size < 3) set.add(w)
+            val top = dictFor(lang)?.words
+            if (top != null) {
+                var i = 0
+                while (set.size < 3 && i < min(top.size, 60)) {
+                    val w = top[i++]
+                    if (w != prev && w.isNotBlank() && w.all { it.isLetter() }) set.add(w)
+                }
+            }
+        }
+        val words = set.filter { it.isNotBlank() }.map { if (lang.id == "en" && it == "i") "I" else applyCase(it, cap, false) }
         val a = words.getOrElse(0) { "" }
         val b = words.getOrElse(1) { "" }
         val c = words.getOrElse(2) { "" }
