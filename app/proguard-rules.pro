@@ -16,3 +16,15 @@
 -dontwarn jdk.dynalink.**
 -dontwarn java.awt.**
 -dontwarn javax.swing.**
+
+# SDK Anthropic (исправление текста Claude): Jackson сериализует модели запросов через рефлексию —
+# без этих правил R8 переименовывает классы и запрос не собирается («JsonMissing cannot be serialized»)
+-keep class com.anthropic.** { *; }
+-keep class com.fasterxml.jackson.** { *; }
+-keep class kotlin.Metadata { *; }
+-keepattributes Signature,*Annotation*,InnerClasses,EnclosingMethod,RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations
+-dontwarn com.fasterxml.jackson.**
+-dontwarn org.apache.hc.**
+-dontwarn com.anthropic.**
+-dontwarn java.lang.reflect.AnnotatedParameterizedType
+-dontwarn java.lang.reflect.AnnotatedType
