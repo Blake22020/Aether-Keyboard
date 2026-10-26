@@ -7,36 +7,93 @@
   "icon": "⌨️",
   "enabledByDefault": true,
   "skin": {
-    "keyboard": { "corner": 16 },
+    "keyboard": {
+      "corner": 16
+    },
     "colors": {
-      "background": "#D1D4DA", "key": "#FFFFFF", "keyText": "#1C1C1E",
-      "func": "#ACB1BB", "funcText": "#1C1C1E", "accent": "#0A7AFF", "accentText": "#FFFFFF"
+      "background": "#D1D4DA",
+      "key": "#FFFFFF",
+      "keyText": "#1C1C1E",
+      "func": "#ACB1BB",
+      "funcText": "#1C1C1E",
+      "accent": "#0A7AFF",
+      "accentText": "#FFFFFF"
     },
     "keys": {
       "*": {
-        "radius": 6, "pressedRadius": 6, "shadow": 0.6, "shadowY": 1, "shadowColor": "#59000000",
-        "pressedBackground": "#E6E8EC", "press": "none", "hideHint": true
+        "radius": 6,
+        "pressedRadius": 6,
+        "shadow": 0.6,
+        "shadowY": 1,
+        "shadowColor": "#59000000",
+        "pressedBackground": "#E6E8EC",
+        "press": "none",
+        "hideHint": true
       },
-      "func": { "background": "#ACB1BB", "pressedBackground": "#FFFFFF" },
-      "space": { "background": "#FFFFFF", "text": "#1C1C1E" },
-      "enter": { "pressedBackground": "#3B95FF" }
+      "func": {
+        "background": "#ACB1BB",
+        "pressedBackground": "#FFFFFF"
+      },
+      "space": {
+        "background": "#FFFFFF",
+        "text": "#1C1C1E"
+      },
+      "enter": {
+        "pressedBackground": "#3B95FF"
+      }
     },
-    "popup": { "radius": 8, "background": "#FFFFFF", "text": "#1C1C1E", "pressedBackground": "#0A7AFF", "pressedText": "#FFFFFF" },
-    "chips": { "material": "none", "text": "#1C1C1E" },
-    "buttons": { "material": "none", "text": "#4A4C52" },
+    "popup": {
+      "radius": 8,
+      "background": "#FFFFFF",
+      "text": "#1C1C1E",
+      "pressedBackground": "#0A7AFF",
+      "pressedText": "#FFFFFF"
+    },
+    "chips": {
+      "material": "none",
+      "text": "#1C1C1E"
+    },
+    "buttons": {
+      "material": "none",
+      "text": "#4A4C52"
+    },
     "dark": {
       "colors": {
-        "background": "#1C1C1E", "key": "#4A4A4E", "keyText": "#F2F2F7",
-        "func": "#2E2E31", "funcText": "#F2F2F7", "accent": "#0A84FF", "accentText": "#FFFFFF"
+        "background": "#1C1C1E",
+        "key": "#4A4A4E",
+        "keyText": "#F2F2F7",
+        "func": "#2E2E31",
+        "funcText": "#F2F2F7",
+        "accent": "#0A84FF",
+        "accentText": "#FFFFFF"
       },
       "keys": {
-        "*": { "shadowColor": "#99000000", "pressedBackground": "#636366" },
-        "func": { "background": "#2E2E31", "pressedBackground": "#4A4A4E" },
-        "space": { "background": "#4A4A4E", "text": "#F2F2F7" }
+        "*": {
+          "shadowColor": "#99000000",
+          "pressedBackground": "#636366"
+        },
+        "func": {
+          "background": "#2E2E31",
+          "pressedBackground": "#4A4A4E"
+        },
+        "space": {
+          "background": "#4A4A4E",
+          "text": "#F2F2F7"
+        }
       },
-      "popup": { "background": "#5A5A5E", "text": "#F2F2F7" },
-      "chips": { "text": "#F2F2F7" },
-      "buttons": { "text": "#AEAEB2" }
+      "popup": {
+        "background": "#5A5A5E",
+        "text": "#F2F2F7"
+      },
+      "chips": {
+        "text": "#F2F2F7"
+      },
+      "buttons": {
+        "text": "#AEAEB2"
+      }
+    },
+    "panel": {
+      "radius": 10
     }
   }
 }
