@@ -39,6 +39,9 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.Window
 import android.view.inputmethod.EditorInfo
+import androidx.annotation.RequiresApi
+import android.view.inputmethod.InlineSuggestionsResponse
+import android.view.inputmethod.InlineSuggestionsRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
@@ -156,6 +159,20 @@ class KeyboardState {
     var translatorResult by mutableStateOf("")
     var translatorLoading by mutableStateOf(false)
     var emojiQuery by mutableStateOf("")
+    /** Подсказки автозаполнения (пароли, логины из Google Паролей и т. п.) — готовые View от системы. */
+    var inlineSuggestions by mutableStateOf<List<View>>(emptyList())
+    /** Идёт исправление текста — кнопка на панели крутится, по клавиатуре бежит сияние. */
+    var aiBusy by mutableStateOf(false)
+    /** Текст только что исправлен — короткая вспышка. Число растёт с каждым исправлением. */
+    var aiDone by mutableIntStateOf(0)
+    /** Поле пустое: вместо подсказок — панель функций. */
+    var fieldEmpty by mutableStateOf(false)
+    /** На пустом поле панель функций убрали кнопкой меню — вместо неё подсказки первого слова. */
+    var toolsDismissed by mutableStateOf(false)
+    /** Режим выделения на панели редактирования: стрелки расширяют выделение, как с зажатым Shift. */
+    var selectMode by mutableStateOf(false)
+    /** Запрос поиска GIF: набирается в строке над клавиатурой, по Enter — результаты в панели GIF. */
+    var gifQuery by mutableStateOf("")
     var pluginTab by mutableStateOf("")
     var pluginStatus by mutableStateOf("")
     /** Печать свайпом разрешена в этом поле (не пароль, не почта/адрес). */
@@ -206,10 +223,77 @@ interface KeyboardActions {
     fun commitClip(entry: String) {}
     fun pasteClipOffer() {}
     fun dismissClipOffer() {}
+    /** Удержание кнопки языка, если в настройках выбрано не «список языков». */
+    fun globeHold() {}
+    /** Кнопка панели редактирования: home, end, up, down, left, right, select, select_all, copy, paste. */
+    fun editKey(id: String) {}
+    /** Исправить выделенный текст (или весь текст поля): Claude по ключу или бесплатная проверка. */
+    fun aiFix() {}
+    /** Удержание пробела — действие из настроек. */
+    fun spaceHold() {}
+}
+
+/**
+ * Все действия клавиатуры — через эту обёртку: ошибка в одном нажатии (поле ввода другого приложения,
+ * словарь, мод) пишется в журнал, а не роняет клавиатуру вместе с приложением.
+ */
+internal class SafeActions(private val a: KeyboardActions, private val onError: () -> Unit) : KeyboardActions {
+    private inline fun guard(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("ExpressiveKeyboard", "action failed", e)
+            runCatching(onError)
+        }
+    }
+
+    override fun keyDown(key: KeyModel) = guard { a.keyDown(key) }
+    override fun keyUp() = guard { a.keyUp() }
+    override fun keyTick() = guard { a.keyTick() }
+    override fun commitKey(key: KeyModel, text: String) = guard { a.commitKey(key, text) }
+    override fun keyTouch(fx: Float, fy: Float) = guard { a.keyTouch(fx, fy) }
+    override fun swipeSpace(direction: Int) = guard { a.swipeSpace(direction) }
+    override fun pickSuggestion(chip: SuggestionChipModel) = guard { a.pickSuggestion(chip) }
+    override fun commitText(text: String) = guard { a.commitText(text) }
+    override fun commitEmoji(emoji: String) = guard { a.commitEmoji(emoji) }
+    override fun deleteBackward() = guard { a.deleteBackward() }
+    override fun commitGif(gif: TenorGifResult) = guard { a.commitGif(gif) }
+    override fun headerMenu() = guard { a.headerMenu() }
+    override fun togglePanel(panel: ActivePanel) = guard { a.togglePanel(panel) }
+    override fun toggleVoice() = guard { a.toggleVoice() }
+    override fun openSettings() = guard { a.openSettings() }
+    override fun openVoiceFallback() = guard { a.openVoiceFallback() }
+    override fun hideKeyboard() = guard { a.hideKeyboard() }
+    override fun clearClipboard() = guard { a.clearClipboard() }
+    override fun insertTranslation() = guard { a.insertTranslation() }
+    override fun commitSymbol(text: String) = guard { a.commitSymbol(text) }
+    override fun runPluginAction(pluginId: String, index: Int) = guard { a.runPluginAction(pluginId, index) }
+    override fun replaceLast(old: String, new: String) = guard { a.replaceLast(old, new) }
+    override fun commitGlide(path: List<Offset>, keys: Map<Char, Offset>, keyWidth: Float) = guard { a.commitGlide(path, keys, keyWidth) }
+    override fun switchKeyboard() = guard { a.switchKeyboard() }
+    override fun runScriptButton(pluginId: String, id: String) = guard { a.runScriptButton(pluginId, id) }
+    override fun removeClip(text: String) = guard { a.removeClip(text) }
+    override fun togglePinClip(text: String) = guard { a.togglePinClip(text) }
+    override fun forgetSuggestion(word: String) = guard { a.forgetSuggestion(word) }
+    override fun pickCandidate(index: Int) = guard { a.pickCandidate(index) }
+    override fun commitClip(entry: String) = guard { a.commitClip(entry) }
+    override fun pasteClipOffer() = guard { a.pasteClipOffer() }
+    override fun dismissClipOffer() = guard { a.dismissClipOffer() }
+    override fun globeHold() = guard { a.globeHold() }
+    override fun editKey(id: String) = guard { a.editKey(id) }
+    override fun aiFix() = guard { a.aiFix() }
+    override fun spaceHold() = guard { a.spaceHold() }
 }
 
 @Stable
-class VoiceInput(private val context: Context, private val onResult: (String) -> Unit) {
+class VoiceInput(
+    private val context: Context,
+    private val onResult: (String) -> Unit,
+    /** Службы распознавания нет: попробовать системное окно распознавания. true — запущено. */
+    private val onNoEngine: () -> Boolean = { false }
+) {
     var listening by mutableStateOf(false)
         private set
     var status by mutableStateOf(tr("Нажмите на микрофон и говорите"))
@@ -307,6 +391,7 @@ class VoiceInput(private val context: Context, private val onResult: (String) ->
         options = findEngines()
         optionIndex = 0
         if (options.isEmpty()) {
+            if (onNoEngine()) return
             needsFallback = true
             status = tr("На устройстве нет службы распознавания речи. Нажмите «Другой голосовой ввод»")
             return
@@ -410,6 +495,9 @@ class VoiceInput(private val context: Context, private val onResult: (String) ->
 
 /** Сколько живёт предложение вставить только что скопированное. */
 private const val CLIP_OFFER_MS = 3 * 60_000L
+/** Сколько минимум показывается анимация улучшения текста. */
+private const val MIN_AI_ANIM_MS = 700L
+
 private val OFFER_BREAKERS = setOf(KeyType.CHARACTER, KeyType.SPACE, KeyType.BACKSPACE, KeyType.ENTER)
 
 private val PAIRS = mapOf('(' to ')', '[' to ']', '{' to '}', '«' to '»')
@@ -427,13 +515,19 @@ class ComposeKeyboardService : InputMethodService(),
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val store = ViewModelStore()
     private val savedStateController = SavedStateRegistryController.create(this)
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // ошибка в фоновой задаче (подсказки, буфер, GIF) пишется в журнал, а не роняет клавиатуру
+    private val serviceScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, e -> android.util.Log.e("ExpressiveKeyboard", "background task failed", e) }
+    )
 
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val viewModelStore: ViewModelStore get() = store
     override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
 
     private val kb = KeyboardState()
+    /** Действия для интерфейса: сбой одного нажатия сбрасывает набор, а не роняет клавиатуру. */
+    private val safeActions: KeyboardActions = SafeActions(this) { recoverInputState() }
     private lateinit var voice: VoiceInput
     private var clipboardManager: ClipboardManager? = null
     /** Время копирования последней записи буфера, которую уже видели. */
@@ -444,7 +538,15 @@ class ComposeKeyboardService : InputMethodService(),
     private var tapWord: TapWord? = null
     private var inputView: View? = null
     private var navColor: Int? = null
+    /** Размытие под окном клавиатуры (px) и дымка поверх него — «Жидкое стекло». */
+    private var blurRadius = 0
+    private var blurTint = AndroidColor.TRANSPARENT
+    private var blurCornerDp = 28f
     private var navLight = false
+    /** Что уже поставлено окну: фон и размытие меняем только при изменении — иначе окно перекладывается
+     *  при каждом показе, и приложение под клавиатурой дёргается и прокручивается. */
+    private var appliedBg: Any? = null
+    private var appliedWindow: Window? = null
 
     // --- отслеживание текста (без синхронных IPC-запросов к полю ввода) ---
     private var composing = ""
@@ -508,12 +610,14 @@ class ComposeKeyboardService : InputMethodService(),
         get() = when (kb.panel) {
             ActivePanel.TRANSLATE -> kb.translatorInput
             ActivePanel.EMOJI_SEARCH -> kb.emojiQuery
+            ActivePanel.GIF_SEARCH -> kb.gifQuery
             else -> null
         }
         set(v) {
             when (kb.panel) {
                 ActivePanel.TRANSLATE -> kb.translatorInput = v.orEmpty()
                 ActivePanel.EMOJI_SEARCH -> kb.emojiQuery = v.orEmpty()
+                ActivePanel.GIF_SEARCH -> kb.gifQuery = v.orEmpty()
                 else -> Unit
             }
         }
@@ -544,7 +648,7 @@ class ComposeKeyboardService : InputMethodService(),
             for (i in 0 until arr.length()) kb.pinnedClips += arr.getString(i)
         }
         ClipImages.cleanup(this, kb.pinnedClips)
-        voice = VoiceInput(this) { text -> commitText("$text ") }
+        voice = VoiceInput(this, onResult = { text -> commitText("$text ") }, onNoEngine = ::launchVoiceWindow)
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboardManager?.addPrimaryClipChangedListener(clipListener)
         syncClipboard()
@@ -554,6 +658,9 @@ class ComposeKeyboardService : InputMethodService(),
     override fun onEvaluateFullscreenMode(): Boolean = false
 
     override fun onCreateInputView(): View {
+        // Android пересоздаёт окно клавиатуры (поворот, смена темы): старая разметка живёт до уничтожения сервиса,
+        // и её клавиши путаются с новыми — освобождаем её явно
+        (inputView as? ComposeView)?.disposeComposition()
         window?.window?.decorView?.let { d ->
             d.setViewTreeLifecycleOwner(this)
             d.setViewTreeViewModelStoreOwner(this)
@@ -566,14 +673,21 @@ class ComposeKeyboardService : InputMethodService(),
             setViewTreeViewModelStoreOwner(this@ComposeKeyboardService)
             setViewTreeSavedStateRegistryOwner(this@ComposeKeyboardService)
             setContent {
-                KeyboardRoot(kb, this@ComposeKeyboardService, voice) { bg, transparent ->
+                KeyboardRoot(kb, safeActions, voice, onBackground = { bg, transparent ->
                     navColor = if (transparent) AndroidColor.TRANSPARENT else bg.toArgb()
                     navLight = bg.luminance() > 0.5f
                     applyWindowColors()
-                }
+                }, onWindowBlur = { radius, tint, corner ->
+                    blurRadius = radius
+                    blurTint = tint.toArgb()
+                    blurCornerDp = corner
+                    applyWindowColors()
+                })
             }
         }
         inputView = view
+        // окно клавиатуры на многих телефонах выше самой клавиатуры — размытие подгоняем под неё при каждом изменении
+        view.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> if (blurRadius > 0) fitBlurToKeyboard() }
         applyWindowColors()
         return view
     }
@@ -581,6 +695,15 @@ class ComposeKeyboardService : InputMethodService(),
     private fun moveLifecycle(target: Lifecycle.State) {
         if (lifecycleRegistry.currentState == Lifecycle.State.DESTROYED) return
         lifecycleRegistry.currentState = target
+    }
+
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        super.onStartInput(attribute, restarting)
+        // приложение снова в фокусе после окна распознавания — вставить сказанное (чуть позже: поле должно ожить)
+        if (VoiceBridge.hasPending) serviceScope.launch {
+            delay(150)
+            commitPendingVoice()
+        }
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -592,8 +715,63 @@ class ComposeKeyboardService : InputMethodService(),
         applyWindowColors()
     }
 
+    // ------------------------------------------------------------------ автозаполнение (Android 11+)
+
+    /** Просим у службы автозаполнения (Google Пароли и др.) подсказки для поля — как Gboard. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    override fun onCreateInlineSuggestionsRequest(uiExtras: Bundle): InlineSuggestionsRequest? = runCatching {
+        val d = resources.displayMetrics.density
+        val p = KeyboardGeometry.palette
+        val chipColor = (p?.func ?: androidx.compose.ui.graphics.Color(0xFF3A3F4B)).toArgb()
+        val textColor = (p?.onFunc ?: androidx.compose.ui.graphics.Color.White).toArgb()
+        val chip = androidx.autofill.inline.common.ViewStyle.Builder()
+            .setBackground(android.graphics.drawable.Icon.createWithResource(this, R.drawable.inline_chip).setTint(chipColor))
+            .setPadding((12 * d).toInt(), 0, (12 * d).toInt(), 0)
+            .build()
+        val style = androidx.autofill.inline.v1.InlineSuggestionUi.newStyleBuilder()
+            .setSingleIconChipStyle(chip)
+            .setChipStyle(chip)
+            .setTitleStyle(androidx.autofill.inline.common.TextViewStyle.Builder().setTextColor(textColor).setTextSize(14f).build())
+            .setSubtitleStyle(
+                androidx.autofill.inline.common.TextViewStyle.Builder()
+                    .setTextColor(androidx.core.graphics.ColorUtils.setAlphaComponent(textColor, 170)).setTextSize(12f).build()
+            )
+            .setStartIconStyle(androidx.autofill.inline.common.ImageViewStyle.Builder().setLayoutMargin(0, 0, (6 * d).toInt(), 0).build())
+            .build()
+        val styles = androidx.autofill.inline.UiVersions.newStylesBuilder().addStyle(style).build()
+        val spec = android.widget.inline.InlinePresentationSpec.Builder(
+            // не шире места между кнопками меню и микрофона: широкая подсказка там бы не поместилась
+            android.util.Size((64 * d).toInt(), (34 * d).toInt()),
+            android.util.Size((200 * d).toInt(), (38 * d).toInt())
+        ).setStyle(styles).build()
+        InlineSuggestionsRequest.Builder(listOf(spec)).setMaxSuggestionCount(6).build()
+    }.getOrNull()
+
+    /** Подсказки пришли: раздуваем их в View и показываем в строке подсказок. */
+    @RequiresApi(Build.VERSION_CODES.R)
+    override fun onInlineSuggestionsResponse(response: InlineSuggestionsResponse): Boolean {
+        val list = response.inlineSuggestions
+        if (list.isEmpty()) {
+            kb.inlineSuggestions = emptyList()
+            return true
+        }
+        val views = arrayOfNulls<View>(list.size)
+        var left = list.size
+        val size = android.util.Size(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+        list.forEachIndexed { i, s ->
+            runCatching {
+                s.inflate(this, size, mainExecutor) { v ->
+                    views[i] = v
+                    if (--left == 0) kb.inlineSuggestions = views.filterNotNull()
+                }
+            }.onFailure { if (--left == 0) kb.inlineSuggestions = views.filterNotNull() }
+        }
+        return true
+    }
+
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        kb.inlineSuggestions = emptyList()
         composing = ""
         composingStart = -1
         rawComposing = ""
@@ -647,15 +825,53 @@ class ComposeKeyboardService : InputMethodService(),
     private fun applyWindowColors() {
         val w = window?.window ?: return
         runCatching {
-            w.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
-            WindowCompat.setDecorFitsSystemWindows(w, false)
+            val blur = Build.VERSION.SDK_INT >= 31 && blurRadius > 0
+            val bg = if (blur) Triple(blurRadius, blurTint, blurCornerDp) else 0
+            if (bg != appliedBg || w !== appliedWindow) {
+                appliedWindow = w
+                appliedBg = bg
+                if (blur) {
+                    // размытие повторяет форму фона окна: скруглённый сверху прямоугольник с дымкой
+                    val r = blurCornerDp * resources.displayMetrics.density
+                    w.setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
+                        setColor(blurTint)
+                        // одинаковый радиус у всех углов: только тогда контур фона — скруглённый прямоугольник,
+                        // и система скругляет по нему размытие (иначе оно торчит за углами клавиатуры)
+                        cornerRadius = r
+                    })
+                    w.setBackgroundBlurRadius(blurRadius)
+                } else {
+                    w.setBackgroundDrawable(ColorDrawable(AndroidColor.TRANSPARENT))
+                    if (Build.VERSION.SDK_INT >= 31) w.setBackgroundBlurRadius(0)
+                }
+                WindowCompat.setDecorFitsSystemWindows(w, false)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) w.isNavigationBarContrastEnforced = false
+            }
+            if (blur) fitBlurToKeyboard()
             navColor?.let {
                 @Suppress("DEPRECATION")
-                w.navigationBarColor = it
+                if (w.navigationBarColor != it) w.navigationBarColor = it
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) w.isNavigationBarContrastEnforced = false
-            WindowInsetsControllerCompat(w, w.decorView).isAppearanceLightNavigationBars = navLight
+            val insets = WindowInsetsControllerCompat(w, w.decorView)
+            if (insets.isAppearanceLightNavigationBars != navLight) insets.isAppearanceLightNavigationBars = navLight
         }
+    }
+
+    /**
+     * Размытие делает система по границам окна. На части прошивок окно клавиатуры выше самой клавиатуры —
+     * тогда размытие легло бы на весь экран; в этом случае отключаем его и рисуем обычный фон темы.
+     */
+    private fun fitBlurToKeyboard() {
+        if (Build.VERSION.SDK_INT < 31) return
+        val decor = window?.window?.decorView ?: return
+        val v = inputView ?: return
+        if (!v.isAttachedToWindow || v.height == 0 || decor.height == 0) {
+            v.post { if (blurRadius > 0) fitBlurToKeyboard() }
+            return
+        }
+        val slack = (4 * resources.displayMetrics.density).toInt()
+        val overflow = decor.height - v.height > slack || decor.width - v.width > slack
+        if (overflow != WindowBlur.overflow) WindowBlur.overflow = overflow
     }
 
     // ------------------------------------------------------------------ поле ввода
@@ -710,12 +926,14 @@ class ComposeKeyboardService : InputMethodService(),
         if (!restarting) {
             kb.panel = ActivePanel.KEYBOARD
             kb.toolbarOpen = false
+            kb.toolsDismissed = false
             kb.translatorInput = ""
         }
         val cls = (info?.inputType ?: 0) and InputType.TYPE_MASK_CLASS
         kb.symbolsPage = if (cls == InputType.TYPE_CLASS_NUMBER || cls == InputType.TYPE_CLASS_PHONE ||
             cls == InputType.TYPE_CLASS_DATETIME) 1 else 0
         tapWord = null
+        kb.selectMode = false
         kb.shift = if (autoCapAllowed() && startsSentence(info)) ShiftState.SINGLE else ShiftState.OFF
         autoShift = kb.shift == ShiftState.SINGLE
         noCorrectWord = false
@@ -756,6 +974,8 @@ class ComposeKeyboardService : InputMethodService(),
         candidatesStart: Int, candidatesEnd: Int
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        // в поле появился текст — панель функций уступает подсказкам сразу, без ожидания предсказаний
+        if (kb.fieldEmpty && (newSelStart > 0 || newSelEnd > 0 || candidatesEnd > 0)) kb.fieldEmpty = false
         if (expSelStart < 0 || expSelEnd < 0) {
             if (composing.isNotEmpty()) {
                 composingStart = if (candidatesStart >= 0) candidatesStart else newSelStart
@@ -865,11 +1085,14 @@ class ComposeKeyboardService : InputMethodService(),
         if (noCorrectWord) return null
         val lang = kb.language
         val strength = settings.autoCorrectStrength
-        val own = if (precomputedFor == word) precomputedOwn else WordPredictorEngine.autoCorrectionFor(
-            word, lang, strength, lastCommittedWord, touchesOf(word)
-        )
-        // ответ системной проверки обычно уже пришёл; если нет — ждём его совсем недолго
-        val c = if (systemSpellAllowed()) WordPredictorEngine.mergeSystem(word, own, SystemSpell.await(lang, word, 40L), lang, strength) else own
+        val own = if (precomputedFor == word) precomputedOwn else runCatching {
+            WordPredictorEngine.autoCorrectionFor(word, lang, strength, lastCommittedWord, touchesOf(word))
+        }.getOrNull()
+        // ответ системной проверки обычно уже пришёл; ждём его (недолго) только если собираемся менять слово —
+        // иначе каждый пробел при быстром наборе подвешивал клавиатуру
+        val sys = if (!systemSpellAllowed()) null
+        else SystemSpell.cached(lang, word) ?: if (own != null) SystemSpell.await(lang, word, 8L) else null
+        val c = if (systemSpellAllowed()) WordPredictorEngine.mergeSystem(word, own, sys, lang, strength) else own
         return if (c != null && c != word) c else null
     }
 
@@ -924,6 +1147,7 @@ class ComposeKeyboardService : InputMethodService(),
             return
         }
         val tw = tapWord
+        updateFieldEmpty()
         if (tw != null && composing.isEmpty()) {
             scheduleTapWord(tw)
             return
@@ -962,15 +1186,27 @@ class ComposeKeyboardService : InputMethodService(),
                 // сокращение из личного словаря Android
                 chips[1] = SuggestionChipModel("→ " + personalShortcut.take(24), personalShortcut, isPrimary = true, isKeepExact = true)
             }
-            kb.likelyNextLetter = if (!flags.isPassword && word.length >= 2 && lang.composer == Composer.NONE) {
-                snap.chips.asSequence().map { it.commitWord }.filter { it.length > word.length && it.startsWith(word, ignoreCase = true) }
-                    .map { it[word.length].lowercaseChar() }.firstOrNull { it.isLetter() }
-            } else null
             kb.suggestions = chips
             precomputed = snap.autoCorrection
             precomputedOwn = snap.ownCorrection
             precomputedFor = snap.forWord
         }
+    }
+
+    /** Пусто ли поле: запрос к полю — только когда курсор в самом начале или неизвестен. */
+    private fun updateFieldEmpty() {
+        val empty = composing.isEmpty() && rawComposing.isEmpty() && !flags.isPassword && run {
+            val pos = selectionStart()
+            if (pos > 0) return@run false
+            // позиция неизвестна — не спрашиваем поле на каждой букве, оставляем как было
+            if (pos < 0) return@run kb.fieldEmpty
+            val ic = currentInputConnection ?: return@run false
+            runCatching {
+                ic.getTextBeforeCursor(1, 0).isNullOrEmpty() && ic.getTextAfterCursor(1, 0).isNullOrEmpty()
+            }.getOrDefault(false)
+        }
+        if (kb.fieldEmpty != empty) kb.fieldEmpty = empty
+        if (!empty && kb.toolsDismissed) kb.toolsDismissed = false
     }
 
     /** Варианты для слова, на которое нажали: только если оно с ошибкой или незнакомо. */
@@ -1471,6 +1707,20 @@ class ComposeKeyboardService : InputMethodService(),
         setLanguage(list[(i + (if (direction < 0) -1 else 1)).mod(list.size)])
     }
 
+    /**
+     * Системная кнопка «Сменить язык» (в панели навигации, в шторке, Ctrl+Пробел) переключает подтип ввода.
+     * Подтипов у клавиатуры два, а языков может быть больше, — поэтому листаем свои языки по кругу.
+     */
+    override fun onCurrentInputMethodSubtypeChanged(newSubtype: android.view.inputmethod.InputMethodSubtype?) {
+        super.onCurrentInputMethodSubtypeChanged(newSubtype)
+        runCatching {
+            // при выборе клавиатуры из списка подтип тоже «меняется» — язык листаем, только когда она на экране
+            if (!isInputViewShown || Languages.enabled(settings).size < 2) return
+            HapticsEngine.tick(this, inputView, settings)
+            toggleLanguage()
+        }
+    }
+
     private fun setLanguage(lang: KeyboardLanguage) {
         currentInputConnection?.let { ic ->
             if (composing.isNotEmpty()) {
@@ -1509,8 +1759,32 @@ class ComposeKeyboardService : InputMethodService(),
     override fun keyTick() = HapticsEngine.tick(this, inputView, settings)
 
     override fun commitKey(key: KeyModel, text: String) {
+        // ошибка в обработке одного нажатия (поле ввода, словарь, мод) не должна ронять всю клавиатуру
+        try {
+            commitKeySafe(key, text)
+        } catch (e: RuntimeException) {
+            android.util.Log.e("ExpressiveKeyboard", "key ${key.type} failed", e)
+            recoverInputState()
+        }
+    }
+
+    /** После сбоя — забыть, что набиралось: следующее нажатие начнётся с чистого состояния. */
+    private fun recoverInputState() {
+        runCatching { currentInputConnection?.finishComposingText() }
+        composing = ""
+        composingStart = -1
+        rawComposing = ""
+        undo = null
+        autoSpace = false
+        tapWord = null
+        expectUnknown()
+        runCatching { schedulePredictions() }
+    }
+
+    private fun commitKeySafe(key: KeyModel, text: String) {
         // любое нажатие меняет текст — слово под курсором и его границы больше не верны
         tapWord = null
+        if (kb.fieldEmpty && panelInput == null && (key.type == KeyType.CHARACTER || key.type == KeyType.SPACE)) kb.fieldEmpty = false
         if (kb.clipOffer != null && key.type in OFFER_BREAKERS && panelInput == null) kb.clipOffer = null
         when (key.type) {
             KeyType.CHARACTER -> {
@@ -1539,6 +1813,7 @@ class ComposeKeyboardService : InputMethodService(),
             KeyType.SPACE -> panelInput?.let { panelInput = "$it " } ?: typeSpace()
             KeyType.ENTER -> when {
                 kb.panel == ActivePanel.EMOJI_SEARCH -> kb.panel = ActivePanel.EMOJI
+                kb.panel == ActivePanel.GIF_SEARCH -> kb.panel = ActivePanel.GIF
                 kb.panel == ActivePanel.TRANSLATE && kb.translatorResult.isNotBlank() -> insertTranslation()
                 else -> performEnter()
             }
@@ -1671,7 +1946,11 @@ class ComposeKeyboardService : InputMethodService(),
             if (kb.panel == ActivePanel.VOICE) voice.stop()
             kb.panel = ActivePanel.KEYBOARD
             kb.toolbarOpen = false
-        } else kb.toolbarOpen = !kb.toolbarOpen
+        } else if (kb.toolbarOpen || (kb.fieldEmpty && !kb.toolsDismissed)) {
+            // панель открыта сама (поле пустое) или вручную — убираем, на пустом поле остаются подсказки
+            kb.toolbarOpen = false
+            if (kb.fieldEmpty) kb.toolsDismissed = true
+        } else kb.toolbarOpen = true
     }
 
     override fun togglePanel(panel: ActivePanel) {
@@ -1682,6 +1961,10 @@ class ComposeKeyboardService : InputMethodService(),
         if (next == ActivePanel.CLIPBOARD) syncClipboard()
         if (next == ActivePanel.EMOJI_SEARCH) {
             kb.emojiQuery = ""
+            kb.symbolsPage = 0
+        }
+        if (next == ActivePanel.GIF_SEARCH) {
+            kb.gifQuery = ""
             kb.symbolsPage = 0
         }
         kb.panel = next
@@ -1700,7 +1983,26 @@ class ComposeKeyboardService : InputMethodService(),
         }
     }
 
+    /** Распознавание через окно другого приложения; текст вставится, когда поле снова получит фокус. */
+    private fun launchVoiceWindow(): Boolean {
+        if (!VoiceBridge.available(this)) return false
+        if (!VoiceBridge.launch(this, kb.language.locale)) return false
+        kb.panel = ActivePanel.KEYBOARD
+        return true
+    }
+
+    /** Текст из окна распознавания, если он пришёл, пока поле было без фокуса. */
+    private fun commitPendingVoice() {
+        val ic = currentInputConnection ?: return
+        val text = VoiceBridge.take() ?: return
+        runCatching {
+            finishComposing(ic)
+            commitText("$text ")
+        }
+    }
+
     override fun openVoiceFallback() {
+        if (launchVoiceWindow()) return
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager ?: return
         // клавиатура с голосовым режимом (Google voice typing, Gboard и т. п.): переключаемся прямо в него
         val voiceIme = runCatching {
@@ -1710,6 +2012,13 @@ class ComposeKeyboardService : InputMethodService(),
         }.getOrNull()
         if (voiceIme != null && Build.VERSION.SDK_INT >= 28) {
             runCatching { switchInputMethod(voiceIme.first.id, voiceIme.second) }.onSuccess { return }
+        }
+        // распознавать нечем совсем — предложить установить распознавание речи Google
+        val store = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=com.google.android.tts"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { startActivity(store) }.isSuccess) {
+            Toast.makeText(this, tr("Установите «Распознавание и синтез речи Google»"), Toast.LENGTH_LONG).show()
+            return
         }
         imm.showInputMethodPicker()
     }
@@ -1759,6 +2068,104 @@ class ComposeKeyboardService : InputMethodService(),
         val entry = kb.clipOffer ?: return
         kb.clipOffer = null
         commitClip(entry)
+    }
+
+    override fun spaceHold() {
+        when (settings.spaceLongAction) {
+            "AI_FIX" -> aiFix()
+            "VOICE" -> togglePanel(ActivePanel.VOICE)
+            "EMOJI" -> togglePanel(ActivePanel.EMOJI)
+            "CLIPBOARD" -> togglePanel(ActivePanel.CLIPBOARD)
+            "TOOLBAR" -> headerMenu()
+            "SETTINGS" -> openSettings()
+            "OFF" -> Unit
+            else -> switchKeyboard()
+        }
+    }
+
+    override fun aiFix() {
+        if (kb.aiBusy) return
+        val ic = currentInputConnection ?: return
+        if (flags.isPassword) return
+        HapticsEngine.keyPress(this, inputView, settings, false)
+        val t = runCatching { takeTarget(ic, "selection_or_text") }.getOrNull()
+        if (t == null || t.text.isBlank()) {
+            Toast.makeText(this, tr("Нет текста для исправления"), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val s = settings
+        val keys = AiKeys(AiProvider.from(s.aiProvider), s.geminiKey, s.anthropicKey, s.openaiKey, s.groqKey)
+        kb.aiBusy = true
+        val started = SystemClock.uptimeMillis()
+        serviceScope.launch {
+            val r = try {
+                AiFix.fix(this@ComposeKeyboardService, t.text, keys, kb.language.id.substringBefore('-')).also {
+                    // быстрый ответ — дать анимации «зарядиться», чтобы она не мелькнула и не пропала
+                    if (it.isSuccess) delay(MIN_AI_ANIM_MS - (SystemClock.uptimeMillis() - started))
+                }
+            } finally {
+                kb.aiBusy = false
+            }
+            val c = currentInputConnection ?: return@launch
+            r.onSuccess { (out, _) ->
+                when {
+                    out == t.text -> Toast.makeText(this@ComposeKeyboardService, tr("Ошибок не найдено"), Toast.LENGTH_SHORT).show()
+                    // пока ждали ответ, текст поменяли — не затираем то, что пользователь успел набрать
+                    !targetStillValid(c, t) -> Toast.makeText(this@ComposeKeyboardService, tr("Текст изменился — нажмите ещё раз"), Toast.LENGTH_SHORT).show()
+                    else -> {
+                        replaceTarget(c, t, out)
+                        kb.aiDone++
+                    }
+                }
+            }.onFailure { e ->
+                Toast.makeText(this@ComposeKeyboardService, e.message ?: tr("Не удалось исправить текст"), Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    override fun editKey(id: String) {
+        val ic = currentInputConnection ?: return
+        HapticsEngine.tick(this, inputView, settings)
+        if (id == "select") {
+            kb.selectMode = !kb.selectMode
+            return
+        }
+        val arrow = when (id) {
+            "left" -> KeyEvent.KEYCODE_DPAD_LEFT
+            "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
+            "up" -> KeyEvent.KEYCODE_DPAD_UP
+            "down" -> KeyEvent.KEYCODE_DPAD_DOWN
+            "home" -> KeyEvent.KEYCODE_MOVE_HOME
+            "end" -> KeyEvent.KEYCODE_MOVE_END
+            else -> null
+        }
+        runCatching {
+            if (arrow != null && kb.selectMode) {
+                // стрелка с Shift — выделение растёт или сжимается
+                finishComposing(ic)
+                sendChord(ic, arrow, KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON)
+                expectUnknown()
+                undo = null
+                autoSpace = false
+                lastCommittedWord = ""
+                schedulePredictions()
+            } else {
+                pluginKey(ic, id)
+                // скопировали или вставили — выделение больше не нужно
+                if (id == "copy" || id == "paste") kb.selectMode = false
+            }
+        }
+    }
+
+    override fun globeHold() {
+        when (settings.globeLongPress) {
+            "SYSTEM" -> (getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.showInputMethodPicker()
+            "EMOJI" -> togglePanel(ActivePanel.EMOJI)
+            "CLIPBOARD" -> togglePanel(ActivePanel.CLIPBOARD)
+            "VOICE" -> togglePanel(ActivePanel.VOICE)
+            "SETTINGS" -> openSettings()
+            "ONE_HANDED" -> KeyboardPrefs.edit(this) { putString("one_handed", if (settings.oneHanded == "OFF") "RIGHT" else "OFF") }
+        }
     }
 
     override fun dismissClipOffer() {
@@ -1959,7 +2366,7 @@ class ComposeKeyboardService : InputMethodService(),
         val sel = ic.getSelectedText(0)?.toString().orEmpty()
         if (scope != "text" && scope != "word" && sel.isNotEmpty()) return TextTarget(sel, true, "", "", "")
         if (scope == "selection") return null
-        if (scope == "text") {
+        if (scope == "text" || scope == "selection_or_text") {
             val b = ic.getTextBeforeCursor(20000, 0)?.toString().orEmpty()
             val a = ic.getTextAfterCursor(20000, 0)?.toString().orEmpty()
             return if (b.isEmpty() && a.isEmpty()) null else TextTarget(b + a, false, b, a, "")
