@@ -7,3 +7,9 @@ app/src/main/assets/fonts/
 .idea/
 dist/
 .kotlin/
+
+# файлы ИИ-ассистентов — только локально, не в репозиторий
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.claude/
