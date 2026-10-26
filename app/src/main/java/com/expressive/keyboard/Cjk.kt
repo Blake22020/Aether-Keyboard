@@ -29,7 +29,7 @@ data class CjkCandidate(val text: String, val consumed: Int)
 object CjkUser {
     private const val KEY = "cjk_user_words"
     private val words = ConcurrentHashMap<String, ConcurrentHashMap<String, Int>>()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
     @Volatile private var app: Context? = null
     @Volatile private var loaded = false
     private var saveJob: Job? = null
@@ -109,7 +109,7 @@ object Pinyin {
 
     private val dicts = ConcurrentHashMap<String, Dict>()
     private val loading = ConcurrentHashMap.newKeySet<String>()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
 
     private fun variant(lang: KeyboardLanguage) = if (lang.id == "zh-tw") "zh_tw" else "zh_cn"
 
