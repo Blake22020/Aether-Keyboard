@@ -74,7 +74,11 @@ To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in
 - Separate application ID allows installation alongside the upstream release.
 - Existing upstream plugin and JavaScript mod formats remain unchanged.
 
-**Screenshot sharing:** choose Share on any screenshot or image and select Aether Keyboard; the picture will be added to the Android clipboard. Android does not grant an ordinary keyboard background access to all screenshots, so fully automatic monitoring is not provided. Context-aware completion ranking is included. iPhone-like dynamic touch regions are still work in progress. Android restricts system-wide screenshot access; the existing image clipboard panel handles image clips that other apps expose.
+**Screenshot clipboard:** enable Settings → Clipboard → Automatically add screenshots, then grant photo access. Aether observes new screenshots visible to the app while its IME service is active, saves them to local clipboard history and offers them in the suggestion bar; manual Share → Aether Keyboard is an alternative. Android limits background media access. This is not screen recording.
+
+**Typing:** context-ranked word completions, compact keys (down to 24dp), conservatively biased next-key touch regions, and long suggestions that shrink to fit.
+
+**Upstream v11.1.2 integration (Oct 25, 2026):** merges new source files for AI text improvements (provider availability varies by device/API setup), inline autofill support, layout editor, microphone fallback, revised skins and keyboard blur. APK compilation and on-device validation are required before this branch is promoted.
 
 
 ## Thanks and attribution
@@ -83,9 +87,13 @@ Thank you to [kotlalipopus](https://github.com/kotlalipopus/Expressive-Keyboard)
 
 Thank you to the Android Open Source Project contributors for open Android keyboard research and [LatinIME](https://android.googlesource.com/platform/packages/inputmethods/LatinIME/). LatinIME's Apache-2.0 code is **not currently incorporated into this fork**, and Aether does not contain Google's proprietary Gboard code or claim affiliation with Google.
 
+## Acknowledgments
+
+Thank you to [kotlalipopus](https://github.com/kotlalipopus/Expressive-Keyboard), creator of the upstream MIT-licensed Expressive Keyboard. Aether is an independent fork, not affiliated with Google or PixelBoard. No proprietary Gboard code is included.
+
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 kotlalipopus is retained in the original LICENSE file. Changes to this fork are maintained independently by Blake22020.# Expressive-Keyboard
+[MIT](LICENSE). Copyright (c) 2026 kotlalipopus is retained in the original LICENSE file. Changes to this fork are maintained independently by Blake22020.
 
 
 Build validation: GitHub Actions runs on feature branches and pull requests; merge only after a successful Android build.
