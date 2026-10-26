@@ -149,4 +149,9 @@ import kotlin.math.sqrt
 internal fun lerpF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
 internal const val ENTER_NEWLINE = -100
-internal const val GIPHY_API_KEY = "" // вставьте свой ключ Giphy, иначе используется встроенный набор GIF
+// ключи GIF-сервисов задаются при сборке (local.properties) — см. GifCatalog
+
+/** Ошибка фоновой задачи (словарь, загрузка, мод) пишется в журнал и не роняет клавиатуру. */
+internal val BackgroundErrors = kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+    android.util.Log.e("ExpressiveKeyboard", "background task failed", e)
+}
