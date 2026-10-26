@@ -55,7 +55,7 @@ enum class DesignStyle(
     val weight: Int
 ) {
     EXPRESSIVE(
-        "EXPRESSIVE", "Material You Expressive", "Волнистые «печеньки», морфинг формы, округлый шрифт",
+        "EXPRESSIVE", "Material You Expressive", "Волнистые «печеньки» и морфинг формы",
         "", ExpressiveShapePreset.COOKIE_12, "ROUNDED", 16f, 700
     ),
     MATERIAL(
@@ -81,9 +81,8 @@ enum class DesignStyle(
             putString("accent_shape_preset", shape.id)
             putInt("wave_count", shape.defaultWaves)
             putFloat("wave_amplitude_percent", shape.defaultAmplitude)
-            putString("font_style", font)
             putFloat("corner_radius_dp", corner)
-            putInt("font_weight", weight)
+            // шрифт и толщину букв тема не трогает — их выбирает сам пользователь (в том числе свой шрифт)
         }
     }
 
@@ -175,26 +174,26 @@ private fun DrawScope.drawMiniKeyboard(d: DesignStyle, dark: Boolean, primary: C
             shadow = Color.Black.copy(alpha = 0.25f)
         }
         DesignStyle.NEON -> {
-            bg = SolidColor(Color(0xFF0B0A12))
-            orbs += Color(0x2E7A2BFF) to Offset(0.5f, 1.1f)
-            keyColor = Color.White.copy(alpha = 0.04f)
+            bg = Brush.verticalGradient(listOf(Color(0xFF0C0A17), Color(0xFF120E22)))
+            orbs += Color(0x26A78BFA) to Offset(0.85f, 1.1f)
+            keyColor = Color.White.copy(alpha = 0.05f)
             funcColor = keyColor
-            enter = Brush.horizontalGradient(listOf(Color(0xFFFF3DC8), Color(0xFF8A3DFF)))
-            outline = Color(0xCC00E5FF)
-            funcOutline = Color(0xCCFF3DC8)
+            enter = Brush.horizontalGradient(listOf(Color(0xFF22D3EE), Color(0xFFA78BFA)))
+            outline = Color(0xB322D3EE)
+            funcOutline = Color(0xB3A78BFA)
         }
         DesignStyle.NEUMORPH -> if (dark) {
-            bg = SolidColor(Color(0xFF262A31))
-            keyColor = Color(0xFF262A31)
+            bg = SolidColor(Color(0xFF262A32))
+            keyColor = Color(0xFF292D35)
             funcColor = keyColor
-            enter = Brush.linearGradient(listOf(Color(0xFF7088FF), Color(0xFF5068EC)))
+            enter = Brush.linearGradient(listOf(Color(0xFF8B9BFF), Color(0xFF6576F0)))
             shadow = Color(0xD9121418)
             light = Color.White.copy(alpha = 0.07f)
         } else {
-            bg = SolidColor(Color(0xFFE3E7EE))
-            keyColor = Color(0xFFE3E7EE)
+            bg = SolidColor(Color(0xFFE6EAF1))
+            keyColor = Color(0xFFE9EDF3)
             funcColor = keyColor
-            enter = Brush.linearGradient(listOf(Color(0xFF7088FF), Color(0xFF5068EC)))
+            enter = Brush.linearGradient(listOf(Color(0xFF8396FF), Color(0xFF5F73EA)))
             shadow = Color(0x8FA3AFC4)
             light = Color.White.copy(alpha = 0.9f)
         }
