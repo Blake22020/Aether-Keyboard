@@ -32,7 +32,7 @@ Requires Android 8.0 or newer.
 
 ## Installation
 
-1. Download and install the APK from [Releases](https://github.com/kotlalipopus/Expressive-Keyboard/releases/latest).
+1. Download and install a verified Aether APK from [Aether Releases](https://github.com/Blake22020/Aether-Keyboard/releases) or the successful [Build APK workflow](https://github.com/Blake22020/Aether-Keyboard/actions/workflows/build.yml) artifacts. Upstream Expressive Keyboard APKs have a different application ID.
 2. Open the app and enable the keyboard in system settings.
 3. Select Aether Keyboard as your input method.
 
