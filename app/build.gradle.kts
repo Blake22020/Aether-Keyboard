@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -12,13 +14,21 @@ android {
         applicationId = "dev.blake.aetherkeyboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "11.1.1-aether.1"
+        versionCode = 16
+        versionName = "11.1.2-aether.1"
         vectorDrawables {
             useSupportLibrary = true
         }
         // в APK остаются только нужные языки ресурсов библиотек
         resourceConfigurations += listOf("ru", "en")
+
+        // ключи GIF-сервисов — из local.properties (он не попадает в git): KLIPY_API_KEY=… и/или GIPHY_API_KEY=…
+        val local = Properties().apply {
+            val f = rootProject.file("local.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+        }
+        buildConfigField("String", "KLIPY_API_KEY", "\"${local.getProperty("KLIPY_API_KEY", "").trim()}\"")
+        buildConfigField("String", "GIPHY_API_KEY", "\"${local.getProperty("GIPHY_API_KEY", "").trim()}\"")
     }
 
     buildTypes {
@@ -49,7 +59,7 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = false
+        buildConfig = true
     }
 
     dependenciesInfo {
@@ -61,8 +71,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/*.version"
-            excludes += "/kotlin/**"
+            // kotlin/*.kotlin_builtins не вырезаем: без них не работает Jackson в SDK Anthropic
             excludes += "DebugProbesKt.bin"
+            // служебные файлы лицензий из библиотек SDK Anthropic (Jackson, Apache HttpClient)
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/{LICENSE,LICENSE.txt,LICENSE.md,NOTICE,NOTICE.txt,NOTICE.md}"
+            excludes += "META-INF/FastDoubleParser-*"
         }
     }
 }
@@ -90,6 +104,14 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3:1.3.0")
     implementation("androidx.compose.material:material-icons-extended")
+
+    // пароли и логины из Google Паролей (и других служб автозаполнения) в строке подсказок, как в Gboard
+    implementation("androidx.autofill:autofill:1.1.0")
+
+    // исправление текста Gemini Nano прямо на телефоне (через AICore, без ключа и интернета)
+    implementation("com.google.mlkit:genai-proofreading:1.0.0-beta1")
+    // исправление текста с помощью Claude (ключ API пользователя)
+    implementation("com.anthropic:anthropic-java:2.34.0")
 
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-gif:2.6.0")
