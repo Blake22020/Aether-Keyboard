@@ -408,7 +408,9 @@ internal fun ChoiceItem(icon: ImageVector, title: String, subtitle: String?, opt
     GroupItem {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             ItemTitle(icon, title, subtitle)
-            ButtonGroup(options, selected, onSelect)
+            // много вариантов в одну строку не помещаются — по два в ряд
+            if (options.size > 4) options.chunked(2).forEach { ButtonGroup(it, selected, onSelect) }
+            else ButtonGroup(options, selected, onSelect)
         }
     }
 }
