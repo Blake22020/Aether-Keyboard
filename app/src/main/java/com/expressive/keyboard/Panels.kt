@@ -58,6 +58,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.shape.CircleShape
@@ -189,7 +191,9 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
             .map { it.substringBefore('-') }.distinct()
     }
     var pick by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
     LaunchedEffect(input, target) {
+        failed = false
         if (input.isBlank()) {
             state.translatorResult = ""
             state.translatorLoading = false
@@ -197,13 +201,19 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
         }
         state.translatorLoading = true
         delay(350L)
-        val r = Translator.translate(input, "auto", target)
+        // нет сети в первый раз — ещё одна попытка, прежде чем сдаться
+        var r = Translator.translate(input, "auto", target)
+        if (r.isFailure) {
+            delay(800L)
+            r = Translator.translate(input, "auto", target)
+        }
         state.translatorResult = r.getOrElse { "" }
+        failed = r.isFailure
         state.translatorLoading = false
     }
     if (pick) {
         Row(
-            Modifier.fillMaxWidth().clip(PanelShape).background(palette.panel).horizontalScroll(rememberScrollState()).padding(6.dp),
+            Modifier.fillMaxWidth().panelSurface(palette).horizontalScroll(rememberScrollState()).padding(6.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             for (t in targets) {
@@ -220,7 +230,7 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
         return
     }
     Row(
-        modifier = Modifier.fillMaxWidth().clip(PanelShape).background(palette.panel).padding(6.dp),
+        modifier = Modifier.fillMaxWidth().panelSurface(palette).padding(6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -242,6 +252,7 @@ internal fun TranslatorBar(state: KeyboardState, actions: KeyboardActions, setti
             )
             val result = when {
                 state.translatorLoading -> tr("Перевожу…")
+                failed -> tr("Не удалось перевести — проверьте интернет")
                 else -> state.translatorResult
             }
             if (result.isNotEmpty()) {
@@ -279,7 +290,7 @@ internal fun EmojiPanel(actions: KeyboardActions, settings: KeyboardSettings, pa
             .filter { it.system || (imageStyle && EmojiStyles.has(context, style, it.index)) || style == EmojiStyles.CUSTOM }
             .map { it.emoji }
     }
-    Column(Modifier.fillMaxSize().clip(PanelShape).background(palette.panel)) {
+    Column(Modifier.fillMaxSize().panelSurface(palette)) {
         val v = variantsOf
         if (v != null) {
             // выбор тона кожи: основной вариант и все тона
@@ -386,7 +397,7 @@ internal fun EmojiSearchBar(state: KeyboardState, actions: KeyboardActions, sett
         if (query.isBlank()) EmojiRecents.items.mapNotNull { EmojiCatalog.item(it) }.distinct() else EmojiCatalog.search(query)
     }
     Column(
-        Modifier.fillMaxWidth().clip(PanelShape).background(palette.panel).padding(6.dp),
+        Modifier.fillMaxWidth().panelSurface(palette).padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -418,22 +429,70 @@ internal fun EmojiSearchBar(state: KeyboardState, actions: KeyboardActions, sett
     }
 }
 
+/** Строка поиска GIF над клавиатурой: печатаете запрос, Enter или 🔍 — результаты в панели GIF. */
 @Composable
-internal fun GifPanel(actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
+internal fun GifSearchBar(state: KeyboardState, actions: KeyboardActions, palette: KeyPalette, font: FontFamily) {
+    val query = state.gifQuery
+    Row(
+        Modifier.fillMaxWidth().height(48.dp).panelSurface(palette).padding(horizontal = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(Icons.Rounded.Search, null, tint = palette.muted, modifier = Modifier.padding(start = 6.dp).size(20.dp))
+        Text(
+            query.ifEmpty { tr("Найти GIF: привет, котик, ура…") }, Modifier.weight(1f),
+            color = if (query.isEmpty()) palette.muted else palette.onLetter, fontFamily = font, fontSize = 15.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
+        Box(
+            Modifier.height(36.dp).clip(CircleShape).background(palette.accent)
+                .clickable { actions.togglePanel(ActivePanel.GIF) }.padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center
+        ) { Text(tr("Найти"), color = palette.onAccent, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
+    }
+}
+
+@Composable
+internal fun GifPanel(state: KeyboardState, actions: KeyboardActions, settings: KeyboardSettings, palette: KeyPalette, font: FontFamily) {
     val context = LocalContext.current
     val loader = remember { GifImageLoader.get(context) }
+    // запрос из строки поиска важнее категории; пустой запрос — выбранная категория
+    val search = state.gifQuery.trim()
     var cat by remember { mutableIntStateOf(0) }
-    var gifs by remember { mutableStateOf(GifCatalog.fallback(GifCatalog.categories[0].first)) }
+    val online = GifCatalog.online(settings.klipyKey, settings.giphyKey)
+    val gifs = remember { mutableStateListOf<TenorGifResult>() }
+    var next by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
-    LaunchedEffect(cat, settings.giphyKey) {
-        val (title, query) = GifCatalog.categories[cat]
-        gifs = GifCatalog.fallback(title)
+    var error by remember { mutableStateOf<String?>(null) }
+    val (title, catQuery) = GifCatalog.categories[cat]
+    val query = search.ifEmpty { catQuery }
+    val grid = rememberLazyGridState()
+    val scope = rememberCoroutineScope()
+
+    suspend fun load(reset: Boolean) {
+        if (loading) return
         loading = true
-        gifs = GifCatalog.fetch(title, query, settings.giphyKey)
+        val page = GifCatalog.fetch(title, query, if (reset) null else next, settings.klipyKey, settings.giphyKey)
+        if (reset) gifs.clear()
+        gifs.addAll(page.items.filter { n -> gifs.none { it.id == n.id } })
+        next = page.next
+        error = page.error
         loading = false
     }
+    LaunchedEffect(query, settings.klipyKey, settings.giphyKey) {
+        next = null
+        loading = false
+        load(true)
+        grid.scrollToItem(0)
+    }
+    // докручено почти до конца — следующая страница
+    val nearEnd by remember { derivedStateOf { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index?.let { it >= gifs.size - 8 } == true } }
+    LaunchedEffect(nearEnd, next) {
+        if (nearEnd && next != null && !loading) load(false)
+    }
+
     Column(
-        modifier = Modifier.fillMaxSize().clip(PanelShape).background(palette.panel).padding(8.dp),
+        modifier = Modifier.fillMaxSize().panelSurface(palette).padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(
@@ -441,35 +500,80 @@ internal fun GifPanel(actions: KeyboardActions, settings: KeyboardSettings, pale
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            GifCatalog.categories.forEachIndexed { i, (label, _) ->
-                val sel = i == cat
-                Box(
-                    Modifier.clip(CircleShape).background(if (sel) palette.accent else palette.func).clickable { cat = i }
-                        .padding(horizontal = 14.dp, vertical = 8.dp)
-                ) {
-                    Text(label, color = if (sel) palette.onAccent else palette.onFunc, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            // поиск: открывает строку над клавиатурой
+            Box(
+                Modifier.clip(CircleShape).background(if (search.isNotEmpty()) palette.accent else palette.func)
+                    .clickable { actions.togglePanel(ActivePanel.GIF_SEARCH) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Rounded.Search, tr("Поиск"), tint = if (search.isNotEmpty()) palette.onAccent else palette.onFunc, modifier = Modifier.size(16.dp))
+                    if (search.isNotEmpty()) {
+                        Text(search.take(18), color = palette.onAccent, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                    }
                 }
             }
-            if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-        }
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            gridItems(gifs) { gif ->
+            GifCatalog.categories.forEachIndexed { i, (label, _) ->
+                val sel = i == cat && search.isEmpty()
                 Box(
-                    Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(18.dp)).background(palette.func)
-                        .clickable { actions.commitGif(gif) }
+                    Modifier.clip(CircleShape).background(if (sel) palette.accent else palette.func)
+                        .clickable {
+                            cat = i
+                            // категория сбрасывает поиск
+                            if (state.gifQuery.isNotEmpty()) state.gifQuery = ""
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    AsyncImage(
-                        model = gif.previewUrl,
-                        imageLoader = loader,
-                        contentDescription = gif.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
+                    Text(tr(label), color = if (sel) palette.onAccent else palette.onFunc, fontFamily = font, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
+        }
+        if (!online) {
+            Text(
+                tr("Сейчас — встроенная подборка. Чтобы искать любые GIF, добавьте бесплатный ключ KLIPY в настройках → «Буфер обмена и GIF»."),
+                color = palette.muted, fontFamily = font, fontSize = 12.sp, lineHeight = 15.sp,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 110.dp),
+                state = grid,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                gridItems(gifs, key = { it.id }) { gif ->
+                    Box(
+                        Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(14.dp)).background(palette.func)
+                            .clickable { actions.commitGif(gif) }
+                    ) {
+                        AsyncImage(
+                            model = gif.previewUrl,
+                            imageLoader = loader,
+                            contentDescription = gif.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+                if (loading) item(span = { GridItemSpan(maxLineSpan) }) {
+                    Box(Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = palette.accent)
+                    }
+                }
+            }
+            if (!loading && gifs.isEmpty()) {
+                Column(Modifier.align(Alignment.Center).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        if (error != null) tr("Не удалось загрузить GIF: {0}", error.orEmpty()) else tr("Ничего не найдено"),
+                        color = palette.muted, fontFamily = font, fontSize = 14.sp, textAlign = TextAlign.Center
                     )
+                    if (error != null) {
+                        Spacer(Modifier.height(8.dp))
+                        PillButton(tr("Повторить"), palette.func, palette.onFunc, font) { scope.launch { load(true) } }
+                    }
                 }
             }
         }
@@ -482,7 +586,7 @@ internal fun ClipboardPanel(state: KeyboardState, actions: KeyboardActions, pale
     val pinned = state.pinnedClips.toList()
     val items = pinned + state.clipboard.filter { it !in pinned }
     Column(
-        modifier = Modifier.fillMaxSize().clip(PanelShape).background(palette.panel).padding(10.dp),
+        modifier = Modifier.fillMaxSize().panelSurface(palette).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // высота шапки постоянная — записи не прыгают, когда «Очистить» пропадает
@@ -568,7 +672,7 @@ internal fun VoicePanel(
         }
     }
     Column(
-        modifier = Modifier.fillMaxSize().clip(PanelShape).background(palette.panel).padding(14.dp),
+        modifier = Modifier.fillMaxSize().panelSurface(palette).padding(14.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceEvenly
     ) {
@@ -581,11 +685,15 @@ internal fun VoicePanel(
                     scaleX = s
                     scaleY = s
                 }
-                .wavyBackground(spec, if (listening) palette.accent else palette.func) { rotation.value % 360f }
+                .then(
+                    LocalSkin.current?.buttons?.let { b -> Modifier.skinButtonSurface(b, palette, listening) }
+                        ?: Modifier.wavyBackground(spec, if (listening) palette.accent else palette.func) { rotation.value % 360f }
+                )
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { actions.toggleVoice() },
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Outlined.Mic, null, tint = if (listening) palette.onAccent else palette.onFunc, modifier = Modifier.size(44.dp))
+            val idleTint = LocalSkin.current?.buttons?.text ?: palette.onFunc
+            Icon(Icons.Outlined.Mic, null, tint = if (listening) palette.onAccent else idleTint, modifier = Modifier.size(44.dp))
         }
         Text(
             voice.partial.ifEmpty { voice.status },
@@ -634,7 +742,7 @@ internal fun PluginsPanel(state: KeyboardState, actions: KeyboardActions, palett
     }
     val selected = tabs.indexOfFirst { it.key == state.pluginTab }.coerceAtLeast(0)
     val tab = tabs.getOrNull(selected)
-    Column(Modifier.fillMaxSize().clip(PanelShape).background(palette.panel)) {
+    Column(Modifier.fillMaxSize().panelSurface(palette)) {
         if (tab == null) {
             Column(
                 Modifier.weight(1f).fillMaxWidth().padding(16.dp),
