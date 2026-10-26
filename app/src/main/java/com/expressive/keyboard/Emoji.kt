@@ -72,7 +72,7 @@ data class EmojiCategory(val id: String, val icon: String, val items: List<Emoji
 }
 
 object EmojiCatalog {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + BackgroundErrors)
     var categories by mutableStateOf<List<EmojiCategory>>(emptyList())
         private set
     @Volatile private var started = false
