@@ -21,7 +21,7 @@ Requires Android 8.0 or newer.
 - **Typing:** word suggestions, autocorrect, glide (swipe) typing
 - **Languages:** 90+ layouts; Chinese (Pinyin, simplified and traditional) and Japanese (Romaji → Kana) input; Indic scripts (InScript)
 - **Emoji:** all Unicode 16 emoji, search in English and Russian, skin tones, built-in styles (Twemoji, Noto, Blob, OpenMoji)
-- **Designs:** Material You Expressive, Material 3 (Google guidelines), Liquid Glass, Classic, Neon, Neumorphism — one tap
+- **Designs:** Material You Expressive, Material 3 (Google guidelines), PixelBoard-inspired, Liquid Glass, Classic, Neon, Neumorphism — one tap
 - **App language:** Russian or English
 - **Panels:** emoji, GIFs, clipboard, translator, voice input
 - **Look:** Material You colors, themes and skins, custom fonts (.ttf/.otf), a photo from your gallery behind the keys
@@ -80,6 +80,26 @@ To enable GIF search, put your own Giphy key into `GIPHY_API_KEY` in
 
 **Upstream v11.1.2 integration (Oct 25, 2026):** merges new source files for AI text improvements (provider availability varies by device/API setup), inline autofill support, layout editor, microphone fallback, revised skins and keyboard blur. APK compilation and on-device validation are required before this branch is promoted.
 
+
+## PixelBoard feature compatibility
+
+Aether is a **standalone Kotlin/Compose keyboard**; PixelBoard is a GPL-3.0 patch project for proprietary Gboard. Neither PixelBoard's patch hooks nor Google's closed input models can be integrated as a drop-in dependency.
+
+| PixelBoard feature | Aether implementation |
+|---|---|
+| Rounded Material 3 design | PixelBoard-inspired builtin theme; original colors and geometry |
+| AI proofreading and writing | Upstream v11.1.2 AI Fix with provider/device requirements; not Google Rambler |
+| System autofill suggestion chips | Upstream v11.1.2 Android autofill integration |
+| Screenshot suggestions | Opt-in MediaStore watcher, private clipboard history and insert offer |
+| Personalized completions | Contextual bigram ordering with personal word statistics |
+| Adaptive key targeting | Conservative next-letter correction (experimental) |
+| Glide typing | Existing Aether/Expressive glide decoder |
+| Emoji, GIF and clipboard panels | Existing panels; selection and pinning supported |
+| Camera OCR | Not implemented |
+| Gemini Rambler natural voice typing | Not available: proprietary Gboard service |
+| PixelBoard's Gboard-only flags and hooks | Not applicable to a standalone keyboard |
+
+The theme is *inspired by* PixelBoard, not affiliated with or endorsed by its maintainers. Thanks to [Akshayykadam/PixelBoard](https://github.com/Akshayykadam/PixelBoard) for public documentation of its features. No PixelBoard code has been copied.
 
 ## Thanks and attribution
 
