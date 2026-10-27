@@ -22,6 +22,7 @@ internal class ScreenshotWatcher(
     private val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
     private var listening = false
     private var lastSeen = prefs.getLong("last_seen_seconds", 0L)
+    private val delivered = LinkedHashSet<String>()
     private val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) { scan() }
         override fun onChange(selfChange: Boolean, uri: android.net.Uri?) { scan() }
@@ -73,11 +74,14 @@ internal class ScreenshotWatcher(
                 while (cursor.moveToNext() && found.size < 30) {
                     val name = cursor.getString(nameColumn).orEmpty()
                     val date = cursor.getLong(dateColumn)
-                    if (date <= lastSeen || now - date !in 0..600) continue
+                    if (date < lastSeen || now - date !in 0..600) continue
                     // Screenshot filenames in localized media providers may differ; avoid reading non-screenshots.
                     if (!name.contains("screenshot", true) && !name.contains("скриншот", true)
                         && !name.contains("screen_shot", true)) continue
-                    found += ContentUris.withAppendedId(collection, cursor.getLong(idColumn)) to (date * 1000)
+                    val imageUri = ContentUris.withAppendedId(collection, cursor.getLong(idColumn))
+                    val key = imageUri.toString()
+                    if (delivered.add(key)) found += imageUri to (date * 1000)
+                    while (delivered.size > 128) delivered.remove(delivered.first())
                 }
             }
         }
