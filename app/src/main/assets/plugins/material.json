@@ -7,14 +7,34 @@
   "icon": "🟣",
   "enabledByDefault": true,
   "skin": {
-    "keyboard": { "corner": 20 },
-    "keys": {
-      "*": { "radius": 8, "pressedRadius": 8, "press": "scale", "pressScale": 0.97 },
-      "space": { "radius": 8 },
-      "enter": { "shape": "pill" }
+    "keyboard": {
+      "corner": 20
     },
-    "popup": { "radius": 12 },
-    "chips": { "material": "none" },
-    "buttons": { "material": "none" }
+    "keys": {
+      "*": {
+        "radius": 8,
+        "pressedRadius": 8,
+        "press": "scale",
+        "pressScale": 0.97
+      },
+      "space": {
+        "radius": 8
+      },
+      "enter": {
+        "shape": "pill"
+      }
+    },
+    "popup": {
+      "radius": 12
+    },
+    "chips": {
+      "material": "none"
+    },
+    "buttons": {
+      "material": "none"
+    },
+    "panel": {
+      "radius": 18
+    }
   }
 }

@@ -135,6 +135,12 @@ data class KeyboardSkin(
     val font: String? = null,
     /** Круглые кнопки по краям строки подсказок (меню, микрофон). */
     val buttons: KeyStyle? = null,
+    /** Подложка панелей: эмодзи, буфер, голос, переводчик, плагины. */
+    val panel: KeyStyle? = null,
+    /** Размытие приложения под клавиатурой (dp) — настоящее «стекло» на Android 12+. */
+    val windowBlur: Float? = null,
+    /** Дымка поверх размытия: насколько непрозрачен фон клавиатуры. */
+    val blurTint: Color? = null,
     /** Поправки для тёмной темы: накладываются поверх основного оформления. */
     val dark: KeyboardSkin? = null
 ) {
@@ -158,7 +164,10 @@ data class KeyboardSkin(
             colors = colors + d.colors,
             corner = d.corner ?: corner,
             font = d.font ?: font,
-            buttons = pick(d.buttons, buttons)
+            buttons = pick(d.buttons, buttons),
+            panel = pick(d.panel, panel),
+            windowBlur = d.windowBlur ?: windowBlur,
+            blurTint = d.blurTint ?: blurTint
         )
     }
 
@@ -337,6 +346,9 @@ object SkinParser {
             corner = kb.f("corner")?.coerceIn(0f, 48f),
             font = kb.optString("font").lowercase().takeIf { it.isNotEmpty() },
             buttons = o.optJSONObject("buttons")?.let { style(it, "buttons") },
+            panel = o.optJSONObject("panel")?.let { style(it, "panel") },
+            windowBlur = kb.f("windowBlur")?.coerceIn(0f, 150f),
+            blurTint = color(kb.optString("blurTint"), "keyboard.blurTint"),
             dark = if (nested) null else o.optJSONObject("dark")?.let { parse(it, true) }
         )
     }
@@ -452,6 +464,20 @@ internal class SkinKeyCache {
     var runtime: Any? = null
     var bitmapShader: BitmapShader? = null
     var bitmapFor: ImageBitmap? = null
+    /** Тени клавиши в покое — отрисованы один раз в картинку (размытие тени дорогое). */
+    var shadowBmp: android.graphics.Bitmap? = null
+    var shadowKey: Any? = null
+    /** Градиенты по размеру клавиши: создаются один раз, а не на каждый кадр. */
+    private val brushes = HashMap<Any, Brush>()
+
+    fun brush(key: Any, make: () -> Brush): Brush {
+        brushes[key]?.let { return it }
+        if (brushes.size > 24) brushes.clear()
+        return make().also { brushes[key] = it }
+    }
+
+    fun fill(f: SkinFill, rect: Rect): Brush =
+        if (f is SkinFill.Solid) SolidColor(f.color) else brush(Triple(f, rect.width, rect.height)) { f.brush(rect) }
 }
 
 internal fun buildKeyPath(path: Path, shape: SkinShape, rect: Rect, r: Float) {
@@ -504,26 +530,51 @@ internal fun buildKeyPath(path: Path, shape: SkinShape, rect: Rect, r: Float) {
 }
 
 private fun DrawScope.outerShadow(c: SkinKeyCache, blur: Float, dx: Float, dy: Float, color: Color) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || blur <= 0.5f || color.alpha <= 0.01f) return
-    drawIntoCanvas { cv ->
-        val nc = cv.nativeCanvas
-        val ap = c.path.asAndroidPath()
-        nc.save()
-        nc.clipOutPath(ap)
-        c.paint.style = AndroidPaint.Style.FILL
-        c.paint.shader = null
-        c.paint.color = AndroidColor.BLACK
-        c.paint.setShadowLayer(blur, dx, dy, color.toArgb())
-        nc.drawPath(ap, c.paint)
-        c.paint.clearShadowLayer()
-        nc.restore()
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+    drawIntoCanvas { cv -> shadowOn(cv.nativeCanvas, c, blur, dx, dy, color) }
+}
+
+private fun shadowOn(nc: android.graphics.Canvas, c: SkinKeyCache, blur: Float, dx: Float, dy: Float, color: Color) {
+    if (blur <= 0.5f || color.alpha <= 0.01f) return
+    val ap = c.path.asAndroidPath()
+    nc.save()
+    nc.clipOutPath(ap)
+    c.paint.style = AndroidPaint.Style.FILL
+    c.paint.shader = null
+    c.paint.color = AndroidColor.BLACK
+    c.paint.setShadowLayer(blur, dx, dy, color.toArgb())
+    nc.drawPath(ap, c.paint)
+    c.paint.clearShadowLayer()
+    nc.restore()
+}
+
+/** Тени и свечение клавиши в покое: рисуются один раз в картинку, дальше она просто копируется. */
+private fun DrawScope.restShadows(c: SkinKeyCache, key: Any, pad: Float, draw: (android.graphics.Canvas) -> Unit) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return
+    var bmp = c.shadowBmp
+    if (c.shadowKey != key || bmp == null) {
+        val w = (size.width + 2 * pad).roundToInt().coerceAtLeast(1)
+        val h = (size.height + 2 * pad).roundToInt().coerceAtLeast(1)
+        bmp = bmp?.takeIf { it.width == w && it.height == h }?.also { it.eraseColor(AndroidColor.TRANSPARENT) }
+            ?: android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val cv = android.graphics.Canvas(bmp)
+        cv.translate(pad, pad)
+        draw(cv)
+        c.shadowBmp = bmp
+        c.shadowKey = key
     }
+    drawIntoCanvas { it.nativeCanvas.drawBitmap(bmp, -pad, -pad, null) }
 }
 
 /**
  * Клавиша в стиле плагина. p — прогресс нажатия 0..1, restR/pressR — скругление по умолчанию,
  * keyPos — положение клавиши относительно фона клавиатуры (для стекла).
  */
+/** Что рисовать: тени и свечение (вне клавиши) и/или саму клавишу — их можно разнести по разным слоям. */
+internal const val SKIN_SHADOW = 1
+internal const val SKIN_BODY = 2
+internal const val SKIN_ALL = 3
+
 internal fun DrawScope.drawSkinKey(
     st: KeyStyle,
     base: KeyColors,
@@ -532,14 +583,17 @@ internal fun DrawScope.drawSkinKey(
     pressR: Float,
     c: SkinKeyCache,
     backdrop: Backdrop?,
+    part: Int = SKIN_ALL,
     keyPos: () -> Offset?
 ) {
     val inset = (st.inset ?: 0f).dp.toPx()
     val rect = Rect(inset, inset, size.width - inset, size.height - inset)
     if (rect.width <= 1f || rect.height <= 1f) return
     val m = min(rect.width, rect.height)
-    val r0 = st.radius?.dp?.toPx() ?: restR
-    val r1 = st.pressedRadius?.dp?.toPx() ?: if (st.radius != null) r0 else pressR
+    // скругление темы — не больше трети меньшей стороны: низкие клавиши (ряд цифр) не превращаются в капсулы
+    val cap = m * 0.34f
+    val r0 = st.radius?.dp?.toPx()?.coerceAtMost(cap) ?: restR
+    val r1 = st.pressedRadius?.dp?.toPx()?.coerceAtMost(cap) ?: if (st.radius != null) r0 else pressR
     val r = lerpF(r0, r1, p).coerceIn(0f, m / 2f)
     buildKeyPath(c.path, st.shape ?: SkinShape.ROUNDED, rect, r)
     val material = st.material ?: SkinMaterial.SOLID
@@ -547,39 +601,75 @@ internal fun DrawScope.drawSkinKey(
     val pressed = st.pressedFill ?: SkinFill.Solid(base.activeBg)
     val dark = base.bg.alpha < 0.05f || base.bg.luminance() < 0.4f
 
-    // тень: нажатая клавиша «прижимается» к фону
+    // тень: нажатая клавиша «прижимается» к фону; свечение у контура горит всегда, у остальных — при нажатии
     val shadow = st.shadow ?: if (material == SkinMaterial.NEUMORPH) 7f else 0f
-    if (shadow > 0f) {
-        val blur = shadow.dp.toPx() * (1f - 0.5f * p)
-        val off = (st.shadowY ?: shadow * 0.45f).dp.toPx() * (1f - 0.7f * p)
-        if (material == SkinMaterial.NEUMORPH) {
-            outerShadow(c, blur, off, off, st.shadowColor ?: Color.Black.copy(alpha = if (dark) 0.55f else 0.22f))
-            outerShadow(c, blur, -off, -off, Color.White.copy(alpha = if (dark) 0.11f else 0.75f))
-        } else {
-            outerShadow(c, blur, 0f, off, st.shadowColor ?: Color.Black.copy(alpha = 0.3f))
+    val glowPx = 12.dp.toPx()
+    val shadowColor = st.shadowColor ?: if (material == SkinMaterial.NEUMORPH) Color.Black.copy(alpha = if (dark) 0.55f else 0.22f)
+    else Color.Black.copy(alpha = 0.3f)
+    val lightColor = Color.White.copy(alpha = if (dark) 0.11f else 0.75f)
+    fun shadows(cv: android.graphics.Canvas, p: Float) {
+        if (shadow > 0f) {
+            val blur = shadow.dp.toPx() * (1f - 0.5f * p)
+            val off = (st.shadowY ?: shadow * 0.45f).dp.toPx() * (1f - 0.7f * p)
+            if (material == SkinMaterial.NEUMORPH) {
+                shadowOn(cv, c, blur, off, off, shadowColor)
+                shadowOn(cv, c, blur, -off, -off, lightColor)
+            } else {
+                shadowOn(cv, c, blur, 0f, off, shadowColor)
+            }
+        }
+        st.glow?.let { g ->
+            val k = if (material == SkinMaterial.OUTLINE) 0.55f + 0.45f * p else p
+            if (k > 0.01f) shadowOn(cv, c, glowPx, 0f, 0f, g.copy(alpha = g.alpha * k))
         }
     }
-    // свечение: у контура горит всегда, у остальных — при нажатии
-    st.glow?.let { g ->
-        val k = if (material == SkinMaterial.OUTLINE) 0.55f + 0.45f * p else p
-        if (k > 0.01f) outerShadow(c, 12.dp.toPx(), 0f, 0f, g.copy(alpha = g.alpha * k))
+    if ((part and SKIN_SHADOW) != 0 && (shadow > 0f || st.glow != null)) {
+        val draw: DrawScope.() -> Unit = {
+            if (p < 0.01f) {
+                // в покое — готовая картинка теней; живые тени — только у нажатой клавиши
+                val pad = (shadow.dp.toPx() * 2.5f + glowPx * 2f).coerceAtLeast(1f)
+                restShadows(c, listOf(size.width, size.height, r, st, dark), pad) { shadows(it, 0f) }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                drawIntoCanvas { shadows(it.nativeCanvas, p) }
+            }
+        }
+        if (material == SkinMaterial.NEUMORPH) {
+            // соседние клавиши рисуются позже и их светлая тень ложилась на край этой клавиши — контур
+            // размывался (особенно в светлой теме). Тени не выходят за ячейку клавиши дальше отступа
+            val spill = max(inset, 2.dp.toPx())
+            clipRect(-spill, -spill, size.width + spill, size.height + spill) { draw() }
+        } else draw()
     }
 
+    if ((part and SKIN_BODY) == 0) return
     when (material) {
         SkinMaterial.SOLID, SkinMaterial.NEUMORPH -> {
-            drawPath(c.path, fill.brush(rect))
-            if (p > 0.001f) drawPath(c.path, pressed.brush(rect), alpha = p)
+            drawPath(c.path, c.fill(fill, rect))
+            if (p > 0.001f) drawPath(c.path, c.fill(pressed, rect), alpha = p)
+            if (material == SkinMaterial.NEUMORPH && st.borderWidth == null) {
+                // чёткий край: свет сверху слева, тень снизу справа — клавиша не сливается с фоном
+                val edge = c.brush(Triple("nedge", rect, dark)) {
+                    Brush.linearGradient(
+                        listOf(
+                            Color.White.copy(alpha = if (dark) 0.07f else 0.8f), Color.Transparent,
+                            shadowColor.copy(alpha = shadowColor.alpha * if (dark) 0.5f else 0.55f)
+                        ),
+                        rect.topLeft, rect.bottomRight
+                    )
+                }
+                drawPath(c.path, edge, alpha = 1f - 0.6f * p, style = Stroke(1.dp.toPx()))
+            }
         }
         SkinMaterial.OUTLINE, SkinMaterial.NONE -> {
-            st.fill?.let { drawPath(c.path, it.brush(rect)) }
-            if (p > 0.001f) drawPath(c.path, pressed.brush(rect), alpha = p * if (material == SkinMaterial.NONE) 0.6f else 0.4f)
+            st.fill?.let { drawPath(c.path, c.fill(it, rect)) }
+            if (p > 0.001f) drawPath(c.path, c.fill(pressed, rect), alpha = p * if (material == SkinMaterial.NONE) 0.6f else 0.4f)
         }
         SkinMaterial.GLASS -> drawGlass(st, st.glass ?: GlassSpec(), pressed, p, rect, r, c, backdrop, keyPos, dark)
     }
 
     val bw = st.borderWidth ?: if (material == SkinMaterial.OUTLINE) 1.5f else 0f
     if (bw > 0f) {
-        val brush = (st.border ?: SkinFill.Solid(base.fg.copy(alpha = 0.55f))).brush(rect)
+        val brush = c.fill(st.border ?: SkinFill.Solid(base.fg.copy(alpha = 0.55f)), rect)
         drawPath(c.path, brush, style = Stroke(bw.dp.toPx()))
     }
 }
@@ -621,15 +711,14 @@ private fun DrawScope.drawGlass(
     }
     // тонировка
     val fill = st.fill
-    if (fill != null) drawPath(c.path, fill.brush(rect))
+    if (fill != null) drawPath(c.path, c.fill(fill, rect))
     else drawPath(c.path, g.tint ?: Color.White.copy(alpha = if (dark) 0.08f else 0.22f))
     if (g.frost > 0f) drawPath(c.path, Color.White.copy(alpha = 0.22f * g.frost))
-    if (p > 0.001f) drawPath(c.path, pressed.brush(rect), alpha = 0.55f * p)
+    if (p > 0.001f) drawPath(c.path, c.fill(pressed, rect), alpha = 0.55f * p)
 
     val hl = g.highlight
     if (hl > 0f) {
-        drawPath(
-            c.path,
+        drawPath(c.path, c.brush(Triple("hl", rect, hl)) {
             Brush.verticalGradient(
                 0f to Color.White.copy(alpha = 0.38f * hl),
                 0.42f to Color.Transparent,
@@ -637,22 +726,29 @@ private fun DrawScope.drawGlass(
                 1f to Color.White.copy(alpha = 0.12f * hl),
                 startY = rect.top, endY = rect.bottom
             )
-        )
-        val spot = Offset(rect.left + rect.width * 0.3f, rect.top + rect.height * 0.12f)
-        val sr = min(rect.width, rect.height) * 0.9f
-        drawPath(c.path, Brush.radialGradient(listOf(Color.White.copy(alpha = 0.2f * hl), Color.Transparent), spot, sr))
+        })
+        drawPath(c.path, c.brush(Triple("spot", rect, hl)) {
+            val spot = Offset(rect.left + rect.width * 0.3f, rect.top + rect.height * 0.12f)
+            Brush.radialGradient(listOf(Color.White.copy(alpha = 0.2f * hl), Color.Transparent), spot, min(rect.width, rect.height) * 0.9f)
+        })
     }
     val rim = g.rim
+    if (!dark) {
+        // белый ободок на светлом фоне не виден — тонкая тёмная кромка снаружи держит форму клавиши
+        drawPath(c.path, Color(0xFF1B2A4A).copy(alpha = 0.13f), style = Stroke(1.dp.toPx()))
+    }
     if (rim > 0f) {
         drawPath(
             c.path,
-            Brush.linearGradient(
-                listOf(
-                    Color.White.copy(alpha = 0.9f * rim), Color.White.copy(alpha = 0.12f * rim),
-                    Color.White.copy(alpha = 0.02f), Color.White.copy(alpha = 0.5f * rim)
-                ),
-                rect.topLeft, rect.bottomRight
-            ),
+            c.brush(Triple("rim", rect, rim)) {
+                Brush.linearGradient(
+                    listOf(
+                        Color.White.copy(alpha = 0.9f * rim), Color.White.copy(alpha = 0.12f * rim),
+                        Color.White.copy(alpha = 0.02f), Color.White.copy(alpha = 0.5f * rim)
+                    ),
+                    rect.topLeft, rect.bottomRight
+                )
+            },
             style = Stroke(1.25.dp.toPx())
         )
     }

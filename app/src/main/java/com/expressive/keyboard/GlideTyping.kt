@@ -40,8 +40,8 @@ class GlideController {
         val widths = ArrayList<Int>()
         for ((label, h) in keys) {
             val c = h.coords ?: continue
-            if (!c.isAttached || label.length != 1 || !label[0].isLetter()) continue
-            val p = layer.localPositionOf(c, Offset.Zero)
+            if (label.length != 1 || !label[0].isLetter()) continue
+            val p = layer.safePositionOf(c) ?: continue
             map[label[0]] = Offset(p.x + c.size.width / 2f, p.y + c.size.height / 2f)
             widths += c.size.width
         }

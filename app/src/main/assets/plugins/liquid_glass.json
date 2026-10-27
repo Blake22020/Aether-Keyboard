@@ -1,74 +1,185 @@
 {
   "id": "builtin.liquid-glass",
   "name": "Жидкое стекло",
-  "version": "2.0",
+  "version": "3.1",
   "author": "Expressive Keyboard",
-  "description": "Клавиши из жидкого стекла поверх мягкого размытого фона: преломление по краям, блик и светлый ободок. Светлое и тёмное. На Android 13+ — настоящее преломление шейдером.",
+  "description": "Клавиатура из жидкого стекла: на Android 12+ она по-настоящему размывает приложение под собой, клавиши — матовое стекло с бликом и ободком, нажатие пружинит как желе. На старых версиях — мягкий фон с преломлением.",
   "icon": "🫧",
   "skin": {
     "keyboard": {
-      "background": { "colors": ["#EEF1F7", "#E1E6F0"], "angle": 90 },
-      "orbs": [
-        { "color": "#B4C6FF", "x": 0.12, "y": 0.2, "r": 0.42 },
-        { "color": "#FFC9DE", "x": 0.88, "y": 0.35, "r": 0.38 },
-        { "color": "#BFEFE6", "x": 0.5, "y": 1.05, "r": 0.45 }
-      ],
+      "background": {
+        "colors": [
+          "#F1F3F8",
+          "#E3E7EF"
+        ],
+        "angle": 90
+      },
+      "windowBlur": 36,
+      "blurTint": "#99EEF1F6",
       "trail": "#992F6BFF",
       "corner": 28
     },
     "colors": {
-      "background": "#E6EAF2", "key": "#FFFFFF", "keyText": "#15171C",
-      "func": "#FFFFFF", "funcText": "#15171C", "accent": "#2F6BFF", "accentText": "#FFFFFF"
+      "background": "#E6EAF2",
+      "key": "#FFFFFF",
+      "keyText": "#15171C",
+      "func": "#FFFFFF",
+      "funcText": "#15171C",
+      "accent": "#2F6BFF",
+      "accentText": "#FFFFFF"
     },
     "keys": {
       "*": {
         "material": "glass",
-        "glass": { "blur": 16, "refraction": 0.5, "dispersion": 0.08, "highlight": 0.7, "rim": 0.75, "tint": "#73FFFFFF" },
+        "glass": {
+          "blur": 16,
+          "refraction": 0.5,
+          "dispersion": 0.08,
+          "highlight": 0.75,
+          "rim": 0.8,
+          "tint": "#8CFFFFFF"
+        },
         "pressedBackground": "#FFFFFF",
-        "shadow": 4, "shadowY": 1.5, "shadowColor": "#1F1B2A4A",
-        "press": "scale", "pressScale": 0.94,
-        "radius": 14, "pressedRadius": 18
+        "shadow": 5,
+        "shadowY": 2,
+        "shadowColor": "#1A1B2A4A",
+        "press": "jelly",
+        "radius": 14,
+        "pressedRadius": 22
       },
-      "func": { "glass": { "blur": 16, "refraction": 0.5, "dispersion": 0.08, "highlight": 0.6, "rim": 0.7, "frost": 0.2, "tint": "#4DFFFFFF" } },
+      "func": {
+        "glass": {
+          "blur": 16,
+          "refraction": 0.5,
+          "dispersion": 0.08,
+          "highlight": 0.6,
+          "rim": 0.7,
+          "frost": 0.25,
+          "tint": "#59FFFFFF"
+        }
+      },
       "enter": {
-        "background": { "colors": ["#E63D7BFF", "#E62F5BFF"], "angle": 90 },
+        "background": {
+          "colors": [
+            "#E63D7BFF",
+            "#E62F5BFF"
+          ],
+          "angle": 90
+        },
         "pressedBackground": "#5C8DFF",
         "text": "#FFFFFF"
       }
     },
-    "popup": { "material": "glass", "radius": 14, "background": "#D9FFFFFF", "text": "#15171C", "pressedBackground": "#2F6BFF", "pressedText": "#FFFFFF" },
-    "chips": { "material": "none", "text": "#15171C" },
+    "popup": {
+      "material": "glass",
+      "radius": 14,
+      "background": "#E6FFFFFF",
+      "text": "#15171C",
+      "pressedBackground": "#2F6BFF",
+      "pressedText": "#FFFFFF"
+    },
+    "chips": {
+      "material": "none",
+      "text": "#15171C"
+    },
     "buttons": {
       "material": "glass",
-      "glass": { "blur": 16, "refraction": 0.5, "dispersion": 0.08, "highlight": 0.7, "rim": 0.75, "tint": "#73FFFFFF" },
+      "glass": {
+        "blur": 16,
+        "refraction": 0.5,
+        "dispersion": 0.08,
+        "highlight": 0.75,
+        "rim": 0.8,
+        "tint": "#8CFFFFFF"
+      },
       "text": "#2A2D35"
+    },
+    "panel": {
+      "material": "glass",
+      "glass": {
+        "blur": 16,
+        "refraction": 0.15,
+        "dispersion": 0.0,
+        "highlight": 0.45,
+        "rim": 0.7,
+        "tint": "#66FFFFFF"
+      },
+      "radius": 22
     },
     "dark": {
       "keyboard": {
-        "background": { "colors": ["#0F121B", "#171A26"], "angle": 90 },
-        "orbs": [
-          { "color": "#592E5BFF", "x": 0.15, "y": 0.2, "r": 0.45 },
-          { "color": "#408E4DFF", "x": 0.85, "y": 0.35, "r": 0.4 },
-          { "color": "#3300BFA5", "x": 0.5, "y": 1.05, "r": 0.5 }
-        ],
+        "background": {
+          "colors": [
+            "#151925",
+            "#0E111A"
+          ],
+          "angle": 90
+        },
+        "blurTint": "#8C10131C",
         "trail": "#CCFFFFFF"
       },
       "colors": {
-        "background": "#12151F", "key": "#2A2E3A", "keyText": "#F4F6FB",
-        "func": "#2A2E3A", "funcText": "#F4F6FB", "accent": "#5C8DFF", "accentText": "#FFFFFF"
+        "background": "#12151F",
+        "key": "#2A2E3A",
+        "keyText": "#F4F6FB",
+        "func": "#2A2E3A",
+        "funcText": "#F4F6FB",
+        "accent": "#5C8DFF",
+        "accentText": "#FFFFFF"
       },
       "keys": {
         "*": {
-          "glass": { "blur": 16, "refraction": 0.55, "dispersion": 0.1, "highlight": 0.55, "rim": 0.6, "tint": "#17FFFFFF" },
-          "pressedBackground": "#73FFFFFF", "shadowColor": "#66000000"
+          "glass": {
+            "blur": 16,
+            "refraction": 0.55,
+            "dispersion": 0.1,
+            "highlight": 0.55,
+            "rim": 0.65,
+            "tint": "#24FFFFFF"
+          },
+          "pressedBackground": "#73FFFFFF",
+          "shadowColor": "#59000000"
         },
-        "func": { "glass": { "blur": 16, "refraction": 0.55, "dispersion": 0.1, "highlight": 0.45, "rim": 0.55, "frost": 0.12, "tint": "#0DFFFFFF" } }
+        "func": {
+          "glass": {
+            "blur": 16,
+            "refraction": 0.55,
+            "dispersion": 0.1,
+            "highlight": 0.45,
+            "rim": 0.55,
+            "frost": 0.12,
+            "tint": "#14FFFFFF"
+          }
+        }
       },
-      "popup": { "background": "#4D2A2E3A", "text": "#FFFFFF", "pressedBackground": "#5C8DFF" },
-      "chips": { "text": "#F4F6FB" },
+      "popup": {
+        "background": "#B32A2E3A",
+        "text": "#FFFFFF",
+        "pressedBackground": "#5C8DFF"
+      },
+      "chips": {
+        "text": "#F4F6FB"
+      },
       "buttons": {
-        "glass": { "blur": 16, "refraction": 0.55, "dispersion": 0.1, "highlight": 0.55, "rim": 0.6, "tint": "#17FFFFFF" },
+        "glass": {
+          "blur": 16,
+          "refraction": 0.55,
+          "dispersion": 0.1,
+          "highlight": 0.55,
+          "rim": 0.65,
+          "tint": "#24FFFFFF"
+        },
         "text": "#E6E9F2"
+      },
+      "panel": {
+        "glass": {
+          "blur": 16,
+          "refraction": 0.15,
+          "dispersion": 0.0,
+          "highlight": 0.35,
+          "rim": 0.5,
+          "tint": "#14FFFFFF"
+        }
       }
     }
   }

@@ -1,0 +1,99 @@
+{
+  "id": "builtin.pixelboard-inspired",
+  "name": "PixelBoard · Inspired",
+  "version": "1.0",
+  "author": "Aether Keyboard",
+  "description": "Самостоятельная тема в духе PixelBoard: округлые клавиши, аккуратная панель подсказок, сдержанные цвета Material 3. Не содержит код и графические ресурсы PixelBoard/Gboard.",
+  "icon": "⌨️",
+  "enabledByDefault": true,
+  "skin": {
+    "keyboard": {
+      "corner": 24
+    },
+    "colors": {
+      "background": "#E5E8EF",
+      "key": "#FBFCFF",
+      "keyText": "#242731",
+      "func": "#C9D1DF",
+      "funcText": "#253247",
+      "accent": "#536ACB",
+      "accentText": "#FFFFFF"
+    },
+    "keys": {
+      "*": {
+        "radius": 18,
+        "pressedRadius": 20,
+        "press": "scale",
+        "pressScale": 0.97,
+        "pressedBackground": "#D8E2FA",
+        "shadow": 0.7,
+        "shadowY": 1,
+        "shadowColor": "#26000000"
+      },
+      "func": {
+        "radius": 22
+      },
+      "space": {
+        "radius": 24
+      },
+      "enter": {
+        "shape": "pill",
+        "radius": 24,
+        "pressedBackground": "#435DB6"
+      }
+    },
+    "popup": {
+      "radius": 18,
+      "background": "#FBFCFF",
+      "text": "#242731",
+      "pressedBackground": "#536ACB",
+      "pressedText": "#FFFFFF"
+    },
+    "chips": {
+      "material": "none",
+      "text": "#242731"
+    },
+    "buttons": {
+      "material": "none",
+      "text": "#3C4F79"
+    },
+    "panel": {
+      "radius": 24
+    },
+    "dark": {
+      "colors": {
+        "background": "#20232B",
+        "key": "#353943",
+        "keyText": "#F3F4F8",
+        "func": "#454C59",
+        "funcText": "#F3F4F8",
+        "accent": "#ACBFFF",
+        "accentText": "#172241"
+      },
+      "keys": {
+        "*": {
+          "pressedBackground": "#515F7C",
+          "shadowColor": "#40000000"
+        },
+        "func": {
+          "pressedBackground": "#58657C"
+        },
+        "enter": {
+          "pressedBackground": "#D4DDFF"
+        }
+      },
+      "popup": {
+        "background": "#454C59",
+        "text": "#F3F4F8",
+        "pressedBackground": "#ACBFFF",
+        "pressedText": "#172241"
+      },
+      "chips": {
+        "text": "#F3F4F8"
+      },
+      "buttons": {
+        "text": "#D4DDFF"
+      }
+    }
+  }
+}

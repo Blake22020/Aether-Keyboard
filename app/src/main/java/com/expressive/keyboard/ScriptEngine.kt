@@ -96,6 +96,7 @@ private class SandboxFactory : ContextFactory() {
         optimizationLevel = -1 // на Android байт-код JVM не загрузить — только интерпретатор
         languageVersion = Rhino.VERSION_ES6
         instructionObserverThreshold = 5_000
+        maximumInterpreterStackDepth = 1_000
         // никаких Java-классов из скрипта
         setClassShutter { false }
     }
@@ -145,7 +146,7 @@ private class Mod(val plugin: KeyboardPlugin) {
 object ScriptHost {
     private val factory = SandboxFactory()
     private val main = Handler(Looper.getMainLooper())
-    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO + BackgroundErrors)
     private var mods: Map<String, Mod> = emptyMap()
     private var appContext: Context? = null
 
@@ -227,7 +228,7 @@ object ScriptHost {
                 m.scope = cx.initSafeStandardObjects()
                 installApi(cx, m)
                 cx.evaluateString(m.scope, src, "${p.id}.js", 1, null)
-            }.onSuccess { log(p.id, "✓ загружен за ${SystemClock.uptimeMillis() - started} мс") }
+            }.onSuccess { log(p.id, "✓ " + tr("загружен за {0} мс", SystemClock.uptimeMillis() - started)) }
         }
         mods = next
         publish()
@@ -344,15 +345,17 @@ object ScriptHost {
         else -> v.toString()
     }
 
-    internal fun fromJs(v: Any?): Any? = when {
+    internal fun fromJs(v: Any?, depth: Int = 0): Any? = when {
         v == null || v is Undefined -> null
         v is CharSequence -> v.toString()
         v is Boolean -> v
         v is Number -> v.toDouble()
         v is JsFunction -> v
-        v is NativeArray -> (0 until v.length.toInt()).map { fromJs(v.get(it, v)) }
+        // глубже 32 уровней — почти наверняка объект ссылается сам на себя
+        depth > 32 -> null
+        v is NativeArray -> (0 until minOf(v.length, 100_000L).toInt()).map { fromJs(v.get(it, v), depth + 1) }
         v is Scriptable -> v.ids.associate { id ->
-            id.toString() to fromJs(if (id is Number) v.get(id.toInt(), v) else v.get(id.toString(), v))
+            id.toString() to fromJs(if (id is Number) v.get(id.toInt(), v) else v.get(id.toString(), v), depth + 1)
         }
         else -> v.toString()
     }
@@ -469,10 +472,9 @@ object ScriptHost {
             mapOf("width" to (sz?.width ?: 0f), "height" to (sz?.height ?: 0f))
         }
         def(kb, "keys") { _, _ ->
-            KeyboardGeometry.snapshot().mapNotNull { h ->
+            KeyboardGeometry.visible().mapNotNull { (h, r) ->
                 val name = KeyboardGeometry.nameOf(h)
-                val r = KeyboardGeometry.rectOf(h)
-                if (name.isEmpty() || r == null) null
+                if (name.isEmpty()) null
                 else mapOf(
                     "label" to name, "type" to h.key.type.name.lowercase(), "x" to r.left, "y" to r.top,
                     "w" to r.width, "h" to r.height, "cx" to r.center.x, "cy" to r.center.y

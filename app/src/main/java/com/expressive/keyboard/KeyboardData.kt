@@ -142,8 +142,8 @@ enum class KeyType { CHARACTER, SHIFT, BACKSPACE, MODE_SYMBOLS, SYMBOLS_PAGE, GL
 
 enum class ShiftState { OFF, SINGLE, CAPS_LOCK }
 
-/** EMOJI_SEARCH — поиск эмодзи: клавиатура печатает в строку поиска. */
-enum class ActivePanel { KEYBOARD, EMOJI, EMOJI_SEARCH, TRANSLATE, GIF, CLIPBOARD, VOICE, PLUGINS }
+/** EMOJI_SEARCH / GIF_SEARCH — поиск: клавиатура печатает в строку поиска. */
+enum class ActivePanel { KEYBOARD, EMOJI, EMOJI_SEARCH, TRANSLATE, GIF, GIF_SEARCH, CLIPBOARD, VOICE, PLUGINS }
 
 @Immutable
 data class KeyModel(
@@ -321,7 +321,8 @@ object KeyboardLayouts {
         punct: Boolean = true,
         languages: List<String> = emptyList(),
         leftSlot: String = "",
-        rightSlot: String = ""
+        rightSlot: String = "",
+        user: Map<String, List<String>> = emptyMap()
     ): List<KeyRow> {
         // раскладка из плагина: без {space} заменяет только верхние ряды, с {space} — всю клавиатуру
         val id = layoutId(lang, page)
@@ -337,11 +338,13 @@ object KeyboardLayouts {
                 }, r.heightWeight)
             }
         }
+        // свои места клавиш (настройки → «Свои места клавиш»)
+        val order = user[id]
         return when (page) {
-            1 -> (custom ?: symbols1) + bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages)
-            2 -> (custom ?: symbols2) + bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages)
+            1 -> UserLayouts.apply(custom ?: symbols1, order) + bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages)
+            2 -> UserLayouts.apply(custom ?: symbols2, order) + bottom("ABC", lang.spaceLabel, false, globe, emoji, punct, languages)
             else -> {
-                val letters = custom ?: lettersFor(lang)
+                val letters = UserLayouts.apply(custom ?: lettersFor(lang), order)
                 val base = letters + bottom("?123", lang.spaceLabel, true, globe, emoji, punct, languages, leftSlot, rightSlot)
                 if (withNumbers) listOf(numberRow) + base else base
             }
@@ -449,13 +452,32 @@ object GifImageLoader {
     }
 }
 
+/** Страница результатов: гифки и «откуда продолжить» (null — дальше ничего нет). */
+@Immutable
+data class GifPage(val items: List<TenorGifResult>, val next: String?, val error: String? = null)
+
+/**
+ * GIF из сети. KLIPY (бесплатная замена закрытого Tenor, совместимый с Tenor API) или GIPHY — по ключу:
+ * свой ключ из настроек важнее ключа, вшитого при сборке. Без ключей — встроенная подборка.
+ */
 object GifCatalog {
     val categories: List<Pair<String, String>> = listOf(
         "🔥 Топ" to "",
+        "👋 Привет" to "hello",
+        "😂 Смешно" to "lol funny",
+        "❤️ Люблю" to "love",
+        "👍 Да" to "yes",
+        "🙅 Нет" to "no",
+        "🙏 Спасибо" to "thank you",
+        "😢 Грустно" to "sad",
+        "😮 Вау" to "wow",
+        "🎉 Праздник" to "party celebrate",
+        "💃 Танец" to "dance",
         "😎 Мемы" to "meme",
-        "😂 Реакции" to "reaction laugh",
         "🐱 Котики" to "cute cat",
-        "❤️ Эмоции" to "love hug happy"
+        "🐶 Собачки" to "cute dog",
+        "🤔 Хм" to "thinking",
+        "😴 Сплю" to "sleepy tired"
     )
 
     private fun g(id: String, title: String, cat: String): TenorGifResult {
@@ -464,87 +486,208 @@ object GifCatalog {
     }
 
     private val builtIn = listOf(
-        g("Ju7l5y9osyymQ", "Rickroll Dance", "🔥 Топ"),
-        g("3o7abKhOpu0NwenH3O", "Awesome Thumbs Up", "🔥 Топ"),
-        g("l0MYt5jPR6QX5pnqM", "Party Celebration", "🔥 Топ"),
-        g("26ufdipQqU2lhNA4g", "Mind Blown Galaxy", "🔥 Топ"),
-        g("xT5LMHxhOfscxPfIfm", "Homer Simpson Yes", "🔥 Топ"),
-        g("5GoVLqeAOo6PK", "Excited Jonah Hill", "🔥 Топ"),
+        g("Ju7l5y9osyymQ", "Rickroll Dance", "💃 Танец"),
+        g("3o7abKhOpu0NwenH3O", "Awesome Thumbs Up", "👍 Да"),
+        g("l0MYt5jPR6QX5pnqM", "Party Celebration", "🎉 Праздник"),
+        g("26ufdipQqU2lhNA4g", "Mind Blown Galaxy", "😮 Вау"),
+        g("xT5LMHxhOfscxPfIfm", "Homer Simpson Yes", "👍 Да"),
+        g("5GoVLqeAOo6PK", "Excited Jonah Hill", "😮 Вау"),
         g("QMHoU66sBXqqLqYvGO", "This Is Fine Dog", "😎 Мемы"),
         g("YnkMcHgNIMW4Yfmjxr", "Stonks Up", "😎 Мемы"),
         g("a93jwI0wkWTQs", "Homer Backing Into Bushes", "😎 Мемы"),
-        g("3o7527pa7qs9kCG78A", "Confused Dog", "😎 Мемы"),
-        g("d3mlE7uhX8KFgEmY", "Smart Thinking", "😎 Мемы"),
-        g("10UeedrT5MIfPG", "Laughing Hysterically", "😂 Реакции"),
-        g("pUeXcg80cO8I8", "Michael Jackson Popcorn", "😂 Реакции"),
-        g("7rj2ZgttvgomY", "Slow Clap Applause", "😂 Реакции"),
+        g("3o7527pa7qs9kCG78A", "Confused Dog", "🤔 Хм"),
+        g("d3mlE7uhX8KFgEmY", "Smart Thinking", "🤔 Хм"),
+        g("10UeedrT5MIfPG", "Laughing Hysterically", "😂 Смешно"),
+        g("pUeXcg80cO8I8", "Michael Jackson Popcorn", "😂 Смешно"),
+        g("7rj2ZgttvgomY", "Slow Clap Applause", "🎉 Праздник"),
         g("JIX9t2j0ZTN9S", "Hacker Cat Typing", "🐱 Котики"),
         g("MDJ9IbxxvDUQM", "Cat Sending Love Kiss", "🐱 Котики"),
         g("VbnUQpnihPSIgIXuZv", "Computer Cat Glasses", "🐱 Котики"),
-        g("3M4NpbLCTxBqU", "Warm Ghost Hug", "❤️ Эмоции"),
-        g("l4pTdcifPZLpDjL1e", "Sending Big Love Hearts", "❤️ Эмоции")
+        g("3M4NpbLCTxBqU", "Warm Ghost Hug", "❤️ Люблю"),
+        g("l4pTdcifPZLpDjL1e", "Sending Big Love Hearts", "❤️ Люблю")
     )
 
-    fun fallback(category: String): List<TenorGifResult> =
-        builtIn.filter { it.category == category }.ifEmpty { builtIn }
+    /** Встроенная подборка: по категории или по словам названия. */
+    fun fallback(category: String, query: String = ""): List<TenorGifResult> {
+        val q = query.trim().lowercase()
+        if (q.isNotEmpty()) return builtIn.filter { g -> q.split(' ').any { it.isNotBlank() && g.title.lowercase().contains(it) } }
+        return builtIn.filter { it.category == category }.ifEmpty { builtIn }
+    }
 
-    suspend fun fetch(category: String, query: String, apiKey: String = ""): List<TenorGifResult> = withContext(Dispatchers.IO) {
-        val key = apiKey.trim().ifBlank { GIPHY_API_KEY }
-        if (key.isBlank()) return@withContext fallback(category)
-        val network = runCatching {
-            val k = URLEncoder.encode(key, "UTF-8")
-            val endpoint = if (query.isBlank()) {
-                "https://api.giphy.com/v1/gifs/trending?api_key=$k&limit=24"
-            } else {
-                "https://api.giphy.com/v1/gifs/search?api_key=$k&q=${URLEncoder.encode(query, "UTF-8")}&limit=24"
-            }
-            val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 4000
-                readTimeout = 4000
-            }
-            val root = try {
-                JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-            } finally {
-                conn.disconnect()
-            }
-            val data = root.optJSONArray("data") ?: JSONArray()
-            (0 until data.length()).mapNotNull { i ->
-                val item = data.getJSONObject(i)
-                val images = item.optJSONObject("images")
-                val preview = images?.optJSONObject("fixed_height")?.optString("url").orEmpty()
-                val full = images?.optJSONObject("original")?.optString("url") ?: preview
-                if (preview.isEmpty()) null
-                else TenorGifResult(item.optString("id", "g$i"), item.optString("title", "GIF"), preview, full, category)
-            }
-        }.getOrNull()
-        if (network.isNullOrEmpty()) fallback(category) else network
+    /** Ключ: свой из настроек → вшитый при сборке. */
+    private fun klipyKey(user: String) = user.trim().ifBlank { BuildConfig.KLIPY_API_KEY }
+    private fun giphyKey(user: String) = user.trim().ifBlank { BuildConfig.GIPHY_API_KEY }
+
+    /** Есть ли вообще чем искать в сети. */
+    fun online(klipyUser: String, giphyUser: String) = klipyKey(klipyUser).isNotBlank() || giphyKey(giphyUser).isNotBlank()
+
+    private const val PAGE = 30
+
+    suspend fun fetch(
+        category: String,
+        query: String,
+        next: String?,
+        klipyUser: String,
+        giphyUser: String
+    ): GifPage = withContext(Dispatchers.IO) {
+        val klipy = klipyKey(klipyUser)
+        val giphy = giphyKey(giphyUser)
+        if (klipy.isBlank() && giphy.isBlank()) {
+            return@withContext GifPage(if (next == null) fallback(category, query) else emptyList(), null)
+        }
+        val r = if (klipy.isNotBlank()) runCatching { klipy(klipy, category, query, next) } else null
+        if (r != null && r.isSuccess && r.getOrThrow().items.isNotEmpty()) return@withContext r.getOrThrow()
+        val g = if (giphy.isNotBlank()) runCatching { giphy(giphy, category, query, next) } else null
+        if (g != null && g.isSuccess) return@withContext g.getOrThrow()
+        val err = (g?.exceptionOrNull() ?: r?.exceptionOrNull())?.message ?: "нет ответа"
+        GifPage(if (next == null) fallback(category, query) else emptyList(), null, err)
+    }
+
+    private fun get(url: String): JSONObject {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 6000
+            readTimeout = 8000
+            setRequestProperty("User-Agent", "ExpressiveKeyboard")
+        }
+        try {
+            val code = conn.responseCode
+            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IllegalStateException("HTTP $code")
+            return JSONObject(body)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun locale(): String = java.util.Locale.getDefault().let { "${it.language}_${it.country.ifEmpty { it.language.uppercase() }}" }
+
+    /** KLIPY в формате Tenor v2: results[].media_formats.{tinygif, gif…}, продолжение — поле next. */
+    private fun klipy(key: String, category: String, query: String, next: String?): GifPage {
+        val k = URLEncoder.encode(key, "UTF-8")
+        val base = if (query.isBlank()) "https://api.klipy.com/v2/featured?key=$k"
+        else "https://api.klipy.com/v2/search?key=$k&q=${URLEncoder.encode(query, "UTF-8")}"
+        val url = "$base&limit=$PAGE&client_key=expressive_keyboard&contentfilter=medium&locale=${locale()}" +
+            "&media_filter=tinygif,gif,mediumgif" + (next?.let { "&pos=" + URLEncoder.encode(it, "UTF-8") } ?: "")
+        val root = get(url)
+        val results = root.optJSONArray("results") ?: JSONArray()
+        val items = (0 until results.length()).mapNotNull { i ->
+            val item = results.optJSONObject(i) ?: return@mapNotNull null
+            val f = item.optJSONObject("media_formats") ?: return@mapNotNull null
+            fun u(name: String) = f.optJSONObject(name)?.optString("url").orEmpty()
+            val preview = u("tinygif").ifEmpty { u("nanogif") }.ifEmpty { u("gif") }
+            val full = u("mediumgif").ifEmpty { u("gif") }.ifEmpty { preview }
+            if (preview.isEmpty()) null
+            else TenorGifResult(item.optString("id", "k$i"), item.optString("content_description", item.optString("title", "GIF")), preview, full, category)
+        }
+        val nxt = root.optString("next").takeIf { it.isNotBlank() && it != "0" && items.isNotEmpty() }
+        return GifPage(items, nxt)
+    }
+
+    /** GIPHY: offset для продолжения, превью — fixed_width_downsampled. */
+    private fun giphy(key: String, category: String, query: String, next: String?): GifPage {
+        val k = URLEncoder.encode(key, "UTF-8")
+        val offset = next?.toIntOrNull() ?: 0
+        val lang = java.util.Locale.getDefault().language
+        val url = if (query.isBlank()) "https://api.giphy.com/v1/gifs/trending?api_key=$k&limit=$PAGE&offset=$offset&rating=pg-13"
+        else "https://api.giphy.com/v1/gifs/search?api_key=$k&q=${URLEncoder.encode(query, "UTF-8")}&limit=$PAGE&offset=$offset&rating=pg-13&lang=$lang"
+        val root = get(url)
+        val data = root.optJSONArray("data") ?: JSONArray()
+        val items = (0 until data.length()).mapNotNull { i ->
+            val item = data.getJSONObject(i)
+            val images = item.optJSONObject("images")
+            val preview = images?.optJSONObject("fixed_width_downsampled")?.optString("url")
+                ?: images?.optJSONObject("fixed_height")?.optString("url").orEmpty()
+            val full = images?.optJSONObject("downsized")?.optString("url")
+                ?: images?.optJSONObject("original")?.optString("url") ?: preview
+            if (preview.isNullOrEmpty()) null
+            else TenorGifResult(item.optString("id", "g$i"), item.optString("title", "GIF"), preview, full, category)
+        }
+        val p = root.optJSONObject("pagination")
+        val total = p?.optInt("total_count", 0) ?: 0
+        val end = offset + (p?.optInt("count", items.size) ?: items.size)
+        return GifPage(items, if (items.isNotEmpty() && end < total && end < 4999) end.toString() else null)
     }
 }
 
 object Translator {
+    /**
+     * Перевод через несколько бесплатных адресов по очереди: основной адрес Google у части операторов
+     * и в части стран недоступен или отвечает ошибкой на частые запросы — тогда пробуем следующий.
+     */
     suspend fun translate(text: String, from: String, to: String): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val clean = text.trim()
-            if (clean.isEmpty()) return@runCatching ""
-            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$from&tl=$to&dt=t&q=" +
-                URLEncoder.encode(clean, "UTF-8")
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5000
-                readTimeout = 5000
-                setRequestProperty("User-Agent", "Mozilla/5.0")
+        val clean = text.trim()
+        if (clean.isEmpty()) return@withContext Result.success("")
+        var last: Throwable? = null
+        for (attempt in listOf(::viaGtx, ::viaDictExt, ::viaMyMemory)) {
+            val r = runCatching { attempt(clean, from, to) }
+            val out = r.getOrNull()?.trim()
+            if (!out.isNullOrEmpty()) return@withContext Result.success(out)
+            last = r.exceptionOrNull() ?: last
+        }
+        Result.failure(last ?: java.io.IOException("empty translation"))
+    }
+
+    private fun open(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
+        connectTimeout = 6000
+        readTimeout = 8000
+        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36")
+    }
+
+    private fun HttpURLConnection.body(): String = try {
+        if (responseCode !in 200..299) throw java.io.IOException("HTTP $responseCode")
+        inputStream.bufferedReader().use { it.readText() }
+    } finally {
+        disconnect()
+    }
+
+    /** Основной адрес; текст — в теле запроса, чтобы длинные фразы не упирались в длину адреса. */
+    private fun viaGtx(text: String, from: String, to: String): String {
+        val conn = open("https://translate.googleapis.com/translate_a/single?client=gtx&sl=$from&tl=$to&dt=t&ie=UTF-8&oe=UTF-8")
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+        conn.outputStream.use { it.write(("q=" + URLEncoder.encode(text, "UTF-8")).toByteArray()) }
+        val parts = JSONArray(conn.body()).optJSONArray(0) ?: return ""
+        return buildString {
+            for (i in 0 until parts.length()) {
+                val p = parts.optJSONArray(i) ?: continue
+                if (!p.isNull(0)) append(p.optString(0))
             }
-            val root = try {
-                JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
-            } finally {
-                conn.disconnect()
-            }
-            val parts = root.getJSONArray(0)
-            buildString {
-                for (i in 0 until parts.length()) {
-                    val p = parts.getJSONArray(i)
-                    if (!p.isNull(0)) append(p.getString(0))
+        }
+    }
+
+    /** Запасной адрес Google (тот, что у расширения браузера): ответ [["перевод","язык"]] или ["перевод"]. */
+    private fun viaDictExt(text: String, from: String, to: String): String {
+        val raw = open(
+            "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=$from&tl=$to&q=" + URLEncoder.encode(text, "UTF-8")
+        ).body()
+        val root = JSONArray(raw)
+        return buildString {
+            for (i in 0 until root.length()) {
+                when (val v = root.opt(i)) {
+                    is String -> append(v)
+                    is JSONArray -> append(v.optString(0))
                 }
             }
         }
+    }
+
+    /** Не Google: MyMemory. Ему нужен исходный язык — угадываем по алфавиту. */
+    private fun viaMyMemory(text: String, from: String, to: String): String {
+        val src = if (from != "auto") from else when {
+            text.any { it in 'Ѐ'..'ӿ' } -> if (text.any { it in "іїєґІЇЄҐ" }) "uk" else "ru"
+            text.any { it in '一'..'鿿' } -> "zh"
+            text.any { it in '぀'..'ヿ' } -> "ja"
+            text.any { it in '가'..'힯' } -> "ko"
+            text.any { it in '؀'..'ۿ' } -> "ar"
+            else -> "en"
+        }
+        if (src == to) return text
+        val raw = open(
+            "https://api.mymemory.translated.net/get?langpair=$src%7C$to&q=" + URLEncoder.encode(text.take(480), "UTF-8")
+        ).body()
+        val o = JSONObject(raw)
+        if (o.optInt("responseStatus", 200) != 200) return ""
+        return o.optJSONObject("responseData")?.optString("translatedText").orEmpty()
     }
 }

@@ -159,6 +159,7 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     LOOK("Тема и шрифт", "Светлая или тёмная тема, форма акцентов, шрифт, анимации", Icons.Rounded.Palette, ExpressiveShapePreset.COOKIE_12),
     COLORS("Цвета и фон", "Свой цвет, цвета клавиш, прозрачность, картинка под клавишами", Icons.Rounded.ColorLens, ExpressiveShapePreset.FLOWER_6),
     KEYS("Размер и кнопки", "Высота клавиш, ряд цифр, кнопки у пробела, режим одной руки", Icons.Rounded.Keyboard, ExpressiveShapePreset.CLOVER_4),
+    LAYOUT("Свои места клавиш", "Поменяйте местами буквы, цифры и знаки или поставьте свои", Icons.Rounded.SwapHoriz, ExpressiveShapePreset.SUNNY_8),
     ICONS("Эмодзи и иконки", "Стиль эмодзи (Twemoji, Noto, Blob…), свои иконки кнопок", Icons.Rounded.EmojiEmotions, ExpressiveShapePreset.SUNNY_8),
     TOOLBAR("Панель инструментов", "Какие кнопки видны и в каком порядке", Icons.Rounded.DragIndicator, ExpressiveShapePreset.FLOWER_6),
     LANGUAGES("Языки", "Раскладки, китайский и японский ввод, словари подсказок", Icons.Rounded.Language, ExpressiveShapePreset.COOKIE_12),
@@ -170,6 +171,10 @@ enum class SettingsPage(val title: String, val subtitle: String, val icon: Image
     BACKUP("Резервная копия", "Экспорт и импорт настроек, сброс, выученные слова", Icons.Rounded.Backup, ExpressiveShapePreset.CLOVER_4),
     ABOUT("О приложении", "Версия, возможности и лицензии", Icons.Rounded.Info, ExpressiveShapePreset.CIRCLE)
 }
+
+private const val FEATURE_AVAILABLE = com.google.mlkit.genai.common.FeatureStatus.AVAILABLE
+private const val FEATURE_DOWNLOADABLE = com.google.mlkit.genai.common.FeatureStatus.DOWNLOADABLE
+private const val FEATURE_DOWNLOADING = com.google.mlkit.genai.common.FeatureStatus.DOWNLOADING
 
 internal fun isImeEnabled(context: Context): Boolean = runCatching {
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
@@ -290,6 +295,7 @@ internal fun SettingsPageScaffold(page: SettingsPage, settings: KeyboardSettings
                     SettingsPage.LOOK -> LookPage(settings)
                     SettingsPage.COLORS -> ColorsPage(settings)
                     SettingsPage.KEYS -> KeysPage(settings)
+                    SettingsPage.LAYOUT -> LayoutEditorPage(settings)
                     SettingsPage.ICONS -> IconsPage(settings)
                     SettingsPage.TOOLBAR -> ToolbarPage(settings)
                     SettingsPage.LANGUAGES -> LanguagesPage(settings)
@@ -377,7 +383,7 @@ internal fun HomePage(settings: KeyboardSettings, onNavigate: (SettingsPage) -> 
     )
     PreviewSection(settings)
     val groups = listOf(
-        "Внешний вид" to listOf(SettingsPage.LOOK, SettingsPage.COLORS, SettingsPage.KEYS, SettingsPage.ICONS, SettingsPage.TOOLBAR),
+        "Внешний вид" to listOf(SettingsPage.LOOK, SettingsPage.COLORS, SettingsPage.KEYS, SettingsPage.LAYOUT, SettingsPage.ICONS, SettingsPage.TOOLBAR),
         "Набор текста" to listOf(SettingsPage.LANGUAGES, SettingsPage.TYPING, SettingsPage.GESTURES, SettingsPage.CLIPBOARD),
         "Отклик и расширения" to listOf(SettingsPage.FEEDBACK, SettingsPage.PLUGINS),
         "Прочее" to listOf(SettingsPage.BACKUP, SettingsPage.ABOUT)
@@ -551,6 +557,24 @@ internal fun ColorsPage(settings: KeyboardSettings) {
         )
         ActionItem(Icons.Rounded.RestartAlt, "Вернуть цвета темы", "Сбросить ручные цвета и прозрачность", onClick = { KeyboardPrefs.resetColors(context) })
     }
+    SettingsSection("Размытие") {
+        ChoiceItem(
+            Icons.Rounded.BlurOn, "Размытие под клавиатурой",
+            when {
+                Build.VERSION.SDK_INT < 31 -> "Нужен Android 12 или новее"
+                settings.windowBlur == "ON" -> "Приложение под клавиатурой видно сквозь матовый фон"
+                settings.windowBlur == "OFF" -> "Обычный непрозрачный фон"
+                else -> "Включено у «Жидкого стекла», у остальных тем — нет"
+            },
+            listOf("THEME" to "Как в теме", "ON" to "Вкл", "OFF" to "Выкл"), settings.windowBlur
+        ) { v -> KeyboardPrefs.edit(context) { putString("window_blur", v) } }
+        if (settings.windowBlur != "OFF") {
+            SliderItem(
+                Icons.Rounded.Opacity, "Сила размытия", settings.windowBlurDp, 4f..100f, { "${it.roundToInt()} dp" },
+                onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("window_blur_dp", v) } }
+            )
+        }
+    }
     SettingsSection("Фоновая картинка") {
         ActionItem(
             icon = Icons.Rounded.Wallpaper,
@@ -675,8 +699,22 @@ internal fun KeysPage(settings: KeyboardSettings) {
         ToggleItem(Icons.Rounded.BorderOuter, "Контур клавиш", null, settings.showKeyBorders) {
             KeyboardPrefs.edit(context) { putBoolean("show_key_borders", it) }
         }
-        ToggleItem(Icons.Rounded.Language, "Кнопка смены языка", "Без неё язык меняется свайпом по пробелу. Удержание — список языков", settings.showGlobeKey) {
+        ToggleItem(Icons.Rounded.SelectAll, "Панель редактирования", "Над клавиатурой: курсор, выделение, копировать и вставить", settings.editBar) {
+            KeyboardPrefs.edit(context) { putBoolean("edit_bar", it) }
+        }
+        ToggleItem(Icons.Rounded.Language, "Кнопка смены языка", "Без неё язык меняется свайпом по пробелу", settings.showGlobeKey) {
             KeyboardPrefs.edit(context) { putBoolean("show_globe_key", it) }
+        }
+        if (settings.showGlobeKey) {
+            val globeActions = listOf(
+                "LANGUAGES" to "Список языков", "SYSTEM" to "Выбор клавиатуры", "EMOJI" to "Эмодзи", "CLIPBOARD" to "Буфер обмена",
+                "VOICE" to "Голосовой ввод", "SETTINGS" to "Настройки", "ONE_HANDED" to "Режим одной руки", "OFF" to "Ничего"
+            )
+            ChoiceItem(
+                Icons.Rounded.TouchApp, "Удержание кнопки языка",
+                globeActions.firstOrNull { it.first == settings.globeLongPress }?.second ?: "Список языков",
+                globeActions, settings.globeLongPress
+            ) { v -> KeyboardPrefs.edit(context) { putString("globe_long_press", v) } }
         }
         ToggleItem(Icons.Rounded.MoreHoriz, "Запятая и точка на странице ?123", "По бокам пробела. Удержание — другие знаки: ; : ' \" ? ! …", settings.punctuationKeys) {
             KeyboardPrefs.edit(context) { putBoolean("punctuation_keys", it) }
@@ -738,6 +776,13 @@ private fun SpaceSlotItem(icon: ImageVector, title: String, value: String, prefK
 internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
     val context = LocalContext.current
     var giphyDialog by remember { mutableStateOf(false) }
+    var klipyDialog by remember { mutableStateOf(false) }
+    var keyDialog by remember { mutableStateOf<String?>(null) }
+    // поддерживает ли телефон исправление на устройстве (Gemini Nano) — для подписи
+    var nanoStatus by remember { mutableStateOf<Int?>(-1) }
+    LaunchedEffect(part) {
+        if (part == SettingsPage.TYPING) nanoStatus = AiFix.nanoStatus(context, "en")
+    }
     if (part == SettingsPage.GESTURES) SettingsSection("Скорость") {
         ToggleItem(Icons.Rounded.Bolt, "Мгновенный ввод", "Буква появляется в момент касания, а не при отпускании пальца", settings.instantInput) {
             KeyboardPrefs.edit(context) { putBoolean("instant_input", it) }
@@ -757,14 +802,85 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         ToggleItem(Icons.Rounded.North, "Свайп вверх по клавише", "Вводит маленький символ-подсказку без удержания", settings.swipeUpHint) {
             KeyboardPrefs.edit(context) { putBoolean("swipe_up_hint", it) }
         }
-        ToggleItem(Icons.Rounded.SpaceBar, "Удержание пробела", "Открывает выбор клавиатуры", settings.spaceLongPress) {
-            KeyboardPrefs.edit(context) { putBoolean("space_long_press", it) }
+        val spaceActions = listOf(
+            "PICKER" to "Выбор клавиатуры", "AI_FIX" to "Улучшить текст", "VOICE" to "Голосовой ввод", "EMOJI" to "Эмодзи",
+            "CLIPBOARD" to "Буфер обмена", "TOOLBAR" to "Панель функций", "SETTINGS" to "Настройки", "OFF" to "Ничего"
+        )
+        ChoiceItem(
+            Icons.Rounded.SpaceBar, "Удержание пробела",
+            spaceActions.firstOrNull { it.first == settings.spaceLongAction }?.second ?: "Выбор клавиатуры",
+            spaceActions, settings.spaceLongAction
+        ) { v ->
+            KeyboardPrefs.edit(context) {
+                putString("space_long_action", v)
+                putBoolean("space_long_press", v != "OFF")
+            }
         }
         ToggleItem(Icons.Rounded.DataArray, "Парные скобки", "( [ { « сразу закрываются, курсор встаёт внутрь", settings.autoPair) {
             KeyboardPrefs.edit(context) { putBoolean("auto_pair", it) }
         }
         ToggleItem(Icons.Rounded.VisibilityOff, "Инкогнито", "Не учить новые слова и не запоминать буфер. Кнопка есть и на панели инструментов", settings.incognito) {
             KeyboardPrefs.edit(context) { putBoolean("incognito", it) }
+        }
+    }
+    if (part == SettingsPage.TYPING) SettingsSection("Исправление текста ИИ") {
+        InfoCard(
+            Icons.Rounded.AutoFixHigh,
+            "Кнопка ✨ на панели инструментов исправляет выделенный текст, а если ничего не выделено — весь текст в поле. " +
+                "«Авто»: сначала на телефоне (Gemini Nano), если он умеет; иначе сервис, для которого задан ключ; иначе бесплатная проверка LanguageTool. " +
+                "Облачные сервисы получают исправляемый текст."
+        )
+        val providers = AiProvider.entries.map { it.id to it.title }
+        val nanoText = when (nanoStatus) {
+            -1 -> "проверяю…"
+            FEATURE_AVAILABLE -> "готово"
+            FEATURE_DOWNLOADABLE, FEATURE_DOWNLOADING -> "скачается при первом исправлении"
+            else -> "этот телефон не поддерживает"
+        }
+        ChoiceItem(
+            Icons.Rounded.AutoFixHigh, "Кто исправляет",
+            when (AiProvider.from(settings.aiProvider)) {
+                AiProvider.AUTO -> tr("Сначала на телефоне, потом сервис с ключом, потом LanguageTool")
+                AiProvider.NANO -> tr("Gemini Nano на телефоне: без интернета, английский и ещё 6 языков (без русского) — {0}", tr(nanoText))
+                AiProvider.GEMINI -> tr("Google Gemini — бесплатный ключ в Google AI Studio")
+                AiProvider.CLAUDE -> tr("Claude от Anthropic — платный ключ")
+                AiProvider.OPENAI -> tr("OpenAI — платный ключ")
+                AiProvider.GROQ -> tr("Groq — быстрый, есть бесплатный ключ")
+                AiProvider.LANGUAGETOOL -> tr("Бесплатная проверка без ключа (не ИИ)")
+            },
+            providers, settings.aiProvider
+        ) { v -> KeyboardPrefs.edit(context) { putString("ai_provider", v) } }
+        ActionItem(
+            Icons.Rounded.Key, "Ключ Gemini",
+            if (settings.geminiKey.isBlank()) "Бесплатно: aistudio.google.com → Get API key" else "Задан",
+            onClick = { keyDialog = "gemini_key" }
+        )
+        ActionItem(
+            Icons.Rounded.Key, "Ключ Claude API",
+            if (settings.anthropicKey.isBlank()) "console.anthropic.com" else "Задан",
+            onClick = { keyDialog = "anthropic_key" }
+        )
+        ActionItem(
+            Icons.Rounded.Key, "Ключ OpenAI",
+            if (settings.openaiKey.isBlank()) "platform.openai.com" else "Задан",
+            onClick = { keyDialog = "openai_key" }
+        )
+        ActionItem(
+            Icons.Rounded.Key, "Ключ Groq",
+            if (settings.groqKey.isBlank()) "Бесплатно: console.groq.com" else "Задан",
+            onClick = { keyDialog = "groq_key" }
+        )
+    }
+    keyDialog?.let { k ->
+        val (title, current, hint) = when (k) {
+            "gemini_key" -> Triple("Ключ Gemini", settings.geminiKey, "Ключ с aistudio.google.com")
+            "openai_key" -> Triple("Ключ OpenAI", settings.openaiKey, "Ключ с platform.openai.com")
+            "groq_key" -> Triple("Ключ Groq", settings.groqKey, "Ключ с console.groq.com")
+            else -> Triple("Ключ Claude API", settings.anthropicKey, "Ключ с console.anthropic.com")
+        }
+        TextInputDialog(title, current, hint, onDismiss = { keyDialog = null }) { v ->
+            KeyboardPrefs.edit(context) { putString(k, v.trim()) }
+            keyDialog = null
         }
     }
     if (part == SettingsPage.TYPING) SettingsSection("Исправления") {
@@ -849,15 +965,28 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
         }
     }
     if (part == SettingsPage.CLIPBOARD) SettingsSection("GIF") {
+        val builtIn = BuildConfig.KLIPY_API_KEY.isNotBlank() || BuildConfig.GIPHY_API_KEY.isNotBlank()
+        if (builtIn) InfoCard(Icons.Rounded.GifBox, "Поиск GIF уже работает — свой ключ не нужен. Можно указать свой, если хотите.")
+        ActionItem(
+            Icons.Rounded.GifBox, "Ключ KLIPY",
+            if (settings.klipyKey.isBlank()) "Бесплатно на partner.klipy.com — поиск любых GIF" else "Задан",
+            onClick = { klipyDialog = true }
+        )
         ActionItem(
             Icons.Rounded.GifBox, "Ключ GIPHY API",
-            if (settings.giphyKey.isBlank()) "Не задан — показывается встроенная подборка" else "Задан — тренды и поиск по категориям",
+            if (settings.giphyKey.isBlank()) "Необязательно — запасной источник" else "Задан",
             onClick = { giphyDialog = true }
         )
     }
+    if (klipyDialog) {
+        TextInputDialog("Ключ KLIPY", settings.klipyKey, "Ключ с partner.klipy.com", onDismiss = { klipyDialog = false }) { v ->
+            KeyboardPrefs.edit(context) { putString("klipy_key", v.trim()) }
+            klipyDialog = false
+        }
+    }
     if (giphyDialog) {
         TextInputDialog("Ключ GIPHY API", settings.giphyKey, "Ключ с developers.giphy.com", onDismiss = { giphyDialog = false }) { v ->
-            KeyboardPrefs.edit(context) { putString("giphy_key", v) }
+            KeyboardPrefs.edit(context) { putString("giphy_key", v.trim()) }
             giphyDialog = false
         }
     }
@@ -868,6 +997,25 @@ internal fun TypingPage(settings: KeyboardSettings, part: SettingsPage) {
 @Composable
 internal fun FeedbackPage(settings: KeyboardSettings) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // свой звук: копируем файл к себе — доступ к выбранному файлу потом пропадает
+    val soundLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val out = java.io.File(context.filesDir, HapticsEngine.SOUND_FILE)
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val bytes = input.readBytes()
+                        require(bytes.size in 1..1_048_576)
+                        out.writeBytes(bytes)
+                    } ?: error("no input")
+                    true
+                }.getOrDefault(false)
+            }
+            if (ok) KeyboardPrefs.edit(context) { putLong("custom_sound_version", System.currentTimeMillis()) }
+            else Toast.makeText(context, tr("Не удалось открыть звук (нужен файл до 1 МБ)"), Toast.LENGTH_LONG).show()
+        }
+    }
     SettingsSection("Вибрация") {
         ToggleItem(Icons.Rounded.Vibration, "Вибрация при нажатии", null, settings.hapticsEnabled) {
             KeyboardPrefs.edit(context) { putBoolean("haptics_enabled", it) }
@@ -918,12 +1066,26 @@ internal fun FeedbackPage(settings: KeyboardSettings) {
             KeyboardPrefs.edit(context) { putBoolean("sound_enabled", it) }
         }
         AnimatedVisibility(settings.soundEnabled) {
-            SliderItem(
-                icon = Icons.Rounded.GraphicEq, title = "Громкость",
-                value = settings.soundVolume, range = 0.05f..1f,
-                format = { "${(it * 100).roundToInt()}%" },
-                onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("sound_volume", v) } }
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                SliderItem(
+                    icon = Icons.Rounded.GraphicEq, title = "Громкость",
+                    value = settings.soundVolume, range = 0.05f..1f,
+                    format = { "${(it * 100).roundToInt()}%" },
+                    onCommit = { v -> KeyboardPrefs.edit(context) { putFloat("sound_volume", v) } }
+                )
+                ActionItem(
+                    Icons.Rounded.AudioFile,
+                    if (settings.customSoundVersion != 0L) "Сменить свой звук" else "Свой звук нажатия",
+                    "Короткий аудиофайл (до 1 МБ): mp3, ogg, wav",
+                    onClick = { soundLauncher.launch("audio/*") }
+                )
+                if (settings.customSoundVersion != 0L) {
+                    ActionItem(Icons.Rounded.RestartAlt, "Вернуть системный звук", null, onClick = {
+                        java.io.File(context.filesDir, HapticsEngine.SOUND_FILE).delete()
+                        KeyboardPrefs.edit(context) { putLong("custom_sound_version", 0L) }
+                    })
+                }
+            }
         }
     }
 }

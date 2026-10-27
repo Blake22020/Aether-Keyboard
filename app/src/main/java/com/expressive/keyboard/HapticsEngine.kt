@@ -174,8 +174,47 @@ object HapticsEngine {
         worker.post { runCatching { v.vibrate(effect) } }
     }
 
+    // ---------------------------------------------------------------- свой звук нажатия
+
+    private var pool: android.media.SoundPool? = null
+    private var poolSound = 0
+    private var poolVersion = -1L
+    @Volatile private var poolReady = false
+
+    const val SOUND_FILE = "click_sound"
+
+    /** Свой звук из файла: SoundPool даёт минимальную задержку. Загружается один раз на версию файла. */
+    private fun customSound(context: Context, version: Long): Boolean {
+        if (version == 0L) return false
+        if (poolVersion != version) {
+            poolVersion = version
+            poolReady = false
+            runCatching { pool?.release() }
+            val f = java.io.File(context.filesDir, SOUND_FILE)
+            if (!f.exists()) {
+                pool = null
+                return false
+            }
+            pool = android.media.SoundPool.Builder()
+                .setMaxStreams(4)
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .build().also { sp ->
+                    sp.setOnLoadCompleteListener { _, _, status -> poolReady = status == 0 }
+                    poolSound = sp.load(f.absolutePath, 1)
+                }
+        }
+        return pool != null
+    }
+
     fun keyPress(context: Context, view: View?, s: KeyboardSettings, special: Boolean) {
-        if (s.soundEnabled) runCatching {
+        if (s.soundEnabled && customSound(context, s.customSoundVersion)) {
+            if (poolReady) runCatching { pool?.play(poolSound, s.soundVolume, s.soundVolume, 1, 0, if (special) 0.92f else 1f) }
+        } else if (s.soundEnabled) runCatching {
             val audio = audio ?: (context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager).also { audio = it }
             audio?.playSoundEffect(
                 if (special) AudioManager.FX_KEYPRESS_SPACEBAR else AudioManager.FX_KEYPRESS_STANDARD, s.soundVolume
