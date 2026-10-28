@@ -24,7 +24,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - name: Compile and test Aether G patch source
         run: bash aether-g/patches.sh
       - uses: actions/upload-artifact@v4
