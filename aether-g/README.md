@@ -34,3 +34,11 @@ Build dependencies and patching instructions are in upstream [PixelBoard](https:
 ## Credit
 
 Thank you to Akshay Kadam and PixelBoard contributors for the GPL-3.0 patch framework. This repository's standalone Aether Keyboard remains separately MIT-licensed. Gboard remains Google's proprietary software.
+
+## Automated verification
+
+Run `bash aether-g/patches.sh` to check out pinned PixelBoard source commit `0a3d0c68`, change the target package constant to `dev.blake.aetherg`, run upstream unit tests and build a Morphe `.mpp` patch bundle.
+
+GitHub Actions workflow `.github/workflows/aether-g-patches.yml` performs the same steps and uploads the patch-bundle artifact. It **does not** build, sign, or distribute any proprietary Gboard APK. Do not ship the patch output as production-ready until a full audit confirms correct permissions, authorities, user data separation, reliable package coexistence, and on-device behavior.
+
+For day-to-day typing until then, use the independently built Aether Keyboard or a trusted keyboard you have tested.
